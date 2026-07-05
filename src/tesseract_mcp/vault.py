@@ -39,6 +39,8 @@ class Vault:
 
     def read(self, relative: str) -> str:
         path = self.resolve(relative)
+        if path.is_dir():
+            raise VaultError(f"'{relative}' is a directory, not a note.")
         if not path.is_file():
             raise VaultError(f"Note not found: {relative}")
         return path.read_text(encoding="utf-8")

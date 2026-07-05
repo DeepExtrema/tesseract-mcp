@@ -96,3 +96,8 @@ def test_write_to_vault_root_raises_vault_error(vault):
 def test_append_to_directory_raises_vault_error(vault):
     with pytest.raises(VaultError, match="directory"):
         vault.append("Claude/Inbox", "- x\n")
+
+
+def test_read_directory_raises_vault_error(vault):
+    with pytest.raises(VaultError, match="directory"):
+        vault.read("Claude/Sessions")
