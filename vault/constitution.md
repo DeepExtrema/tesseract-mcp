@@ -21,8 +21,14 @@ Rules for every AI agent writing to this vault. Read this before writing.
   timestamped bullets.
 - `Claude/Sessions/` — one note per significant work session:
   `YYYY-MM-DD <short title>.md`. Record what was done, learned, and decided.
-- `Claude/Concepts/` — evergreen topic notes, one concept per note. Extend
-  under dated `## Update` headings; never silently rewrite history.
+  Make titles distinctive; a duplicate title on the same day is auto-numbered
+  (`<title> 2.md`) rather than overwritten.
+- `Claude/Concepts/` — evergreen topic notes, one concept per note. Before
+  creating a new concept, `search_brain` for the topic first — extend the
+  existing note rather than fragmenting knowledge across near-duplicates.
+  Concept names are case-insensitive (`ESG Ratings` and `esg ratings` are the
+  same note). Extend under dated `## Update` headings; never silently rewrite
+  history.
 - `Claude/Index.md` — map of contents. Append a line per new session note.
 
 ## Note format
