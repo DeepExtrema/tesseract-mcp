@@ -7,7 +7,7 @@ from datetime import datetime
 
 import yaml
 
-from .vault import Vault, VaultError
+from .vault import Vault
 
 AGENT_NAME = "claude"
 _ILLEGAL = re.compile(r'[\\/:*?"<>|]')
@@ -44,7 +44,11 @@ def log_session(
     now: datetime | None = None,
 ) -> str:
     now = now or datetime.now()
-    stem = f"{now:%Y-%m-%d} {safe_filename(title)}"
+    base = f"{now:%Y-%m-%d} {safe_filename(title)}"
+    stem, n = base, 2
+    while vault.resolve(f"Claude/Sessions/{stem}.md").exists():
+        stem = f"{base} {n}"
+        n += 1
     rel = f"Claude/Sessions/{stem}.md"
     vault.write(
         rel,
@@ -61,19 +65,29 @@ def capture(vault: Vault, content: str, now: datetime | None = None) -> str:
     return rel
 
 
+def _find_concept(vault: Vault, filename: str) -> str | None:
+    folder = vault.resolve("Claude/Concepts")
+    if folder.is_dir():
+        target = filename.casefold()
+        for p in folder.iterdir():
+            if p.name.casefold() == target:
+                return f"Claude/Concepts/{p.name}"
+    return None
+
+
 def upsert_concept(
     vault: Vault, name: str, content: str, now: datetime | None = None
 ) -> str:
     now = now or datetime.now()
-    rel = f"Claude/Concepts/{safe_filename(name)}.md"
-    try:
-        vault.read(rel)
-    except VaultError:
+    filename = f"{safe_filename(name)}.md"
+    existing = _find_concept(vault, filename)
+    if existing is None:
+        rel = f"Claude/Concepts/{filename}"
         vault.write(
             rel,
             make_frontmatter(tags=["concept"], created=now)
             + f"# {name}\n\n{content}\n",
         )
-    else:
-        vault.append(rel, f"\n## Update {now:%Y-%m-%d}\n\n{content}\n")
-    return rel
+        return rel
+    vault.append(existing, f"\n## Update {now:%Y-%m-%d}\n\n{content}\n")
+    return existing

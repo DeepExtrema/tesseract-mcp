@@ -60,3 +60,32 @@ def test_upsert_concept_appends_to_existing(vault):
     assert "Document database used for LiveSync." in body  # original preserved
     assert "## Update 2026-07-05" in body
     assert "Used by LiveSync." in body
+
+
+def test_log_session_same_title_same_day_numbers_the_note(vault):
+    first = notes.log_session(
+        vault, "Standup", "First.", project="p", tags=[], now=NOW
+    )
+    second = notes.log_session(
+        vault, "Standup", "Second.", project="p", tags=[], now=NOW
+    )
+    assert first == "Claude/Sessions/2026-07-05 Standup.md"
+    assert second == "Claude/Sessions/2026-07-05 Standup 2.md"
+    assert "First." in vault.read(first)
+    assert "Second." in vault.read(second)
+    index = vault.read("Claude/Index.md")
+    assert "[[2026-07-05 Standup]]" in index
+    assert "[[2026-07-05 Standup 2]]" in index
+
+
+def test_upsert_concept_matches_name_case_insensitively(vault):
+    rel = notes.upsert_concept(vault, "couchdb", "Case-folded note.", now=NOW)
+    assert rel == "Claude/Concepts/CouchDB.md"
+    body = vault.read("Claude/Concepts/CouchDB.md")
+    assert "Document database used for LiveSync." in body
+    assert "## Update 2026-07-05" in body
+    assert "Case-folded note." in body
+    concepts = [
+        p.name for p in vault.resolve("Claude/Concepts").iterdir() if p.suffix == ".md"
+    ]
+    assert len([n for n in concepts if n.casefold() == "couchdb.md"]) == 1
