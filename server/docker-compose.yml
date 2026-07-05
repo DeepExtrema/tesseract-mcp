@@ -1,0 +1,40 @@
+services:
+  couchdb:
+    image: couchdb:3
+    restart: always
+    environment:
+      - COUCHDB_USER=${COUCHDB_USER}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD}
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+      - ./couchdb-config/local.ini:/opt/couchdb/etc/local.d/livesync.ini
+    expose:
+      - "5984"
+
+  caddy:
+    image: caddy:2
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - couchdb
+
+  duckdns:
+    image: lscr.io/linuxserver/duckdns:latest
+    restart: always
+    environment:
+      - SUBDOMAINS=${DUCKDNS_SUBDOMAIN}
+      - TOKEN=${DUCKDNS_TOKEN}
+      - TZ=Etc/UTC
+
+volumes:
+  couchdb-data:
+  caddy-data:
+  caddy-config:
