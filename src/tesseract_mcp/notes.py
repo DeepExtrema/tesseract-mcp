@@ -10,11 +10,13 @@ import yaml
 from .vault import Vault
 
 AGENT_NAME = "claude"
-_ILLEGAL = re.compile(r'[\\/:*?"<>|]')
+_ILLEGAL = re.compile(r'[\\/:*?"<>|\[\]#^]')
+_WHITESPACE = re.compile(r"\s+")
 
 
 def safe_filename(title: str) -> str:
-    cleaned = _ILLEGAL.sub("", title).strip()
+    cleaned = _ILLEGAL.sub("", title)
+    cleaned = _WHITESPACE.sub(" ", cleaned).strip()
     return cleaned or "untitled"
 
 

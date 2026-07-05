@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import yaml
+
 from tesseract_mcp import notes
 
 NOW = datetime(2026, 7, 5, 14, 30)
@@ -11,6 +13,11 @@ def test_safe_filename_strips_illegal_chars():
 
 def test_safe_filename_empty_falls_back():
     assert notes.safe_filename("///") == "untitled"
+
+
+def test_safe_filename_strips_brackets_and_newlines():
+    assert notes.safe_filename("Fix ]] the [[bug") == "Fix the bug"
+    assert notes.safe_filename("line1\nline2\ttab") == "line1 line2 tab"
 
 
 def test_make_frontmatter_fields():
@@ -89,3 +96,13 @@ def test_upsert_concept_matches_name_case_insensitively(vault):
         p.name for p in vault.resolve("Claude/Concepts").iterdir() if p.suffix == ".md"
     ]
     assert len([n for n in concepts if n.casefold() == "couchdb.md"]) == 1
+
+
+def test_make_frontmatter_yaml_roundtrip_with_special_chars():
+    fm = notes.make_frontmatter(
+        project="esg: incident [pipeline]", tags=['odd"tag', "b:c"], created=NOW
+    )
+    block = fm.removeprefix("---\n").rsplit("---\n\n", 1)[0]
+    meta = yaml.safe_load(block)
+    assert meta["project"] == "esg: incident [pipeline]"
+    assert meta["tags"] == ['odd"tag', "b:c"]
