@@ -50,7 +50,9 @@ def search(
         if SKIP_DIRS & set(rel_parts):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if tags and not set(tags) <= set(_frontmatter_tags(text)):
+        if tags and not {t.casefold() for t in tags} <= {
+            t.casefold() for t in _frontmatter_tags(text)
+        }:
             continue
         rel = "/".join(rel_parts)
         if q in path.stem.lower():
