@@ -1,3 +1,3 @@
-{$DOMAIN} {
+{$DOMAIN:localhost} {
 	reverse_proxy couchdb:5984
 }

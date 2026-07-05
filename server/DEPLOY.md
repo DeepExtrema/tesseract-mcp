@@ -47,6 +47,10 @@ Then create the LiveSync database:
 ## Maintenance
 
 - `docker compose pull && docker compose up -d` occasionally for updates.
+- Admin credentials are set only on FIRST initialization of the
+  `couchdb-data` volume. Editing `.env` later does nothing — to change the
+  password afterwards use CouchDB's config API
+  (`PUT /_node/_local/_config/admins/<user>`), then update `.env` to match.
 - CouchDB data lives in the `couchdb-data` volume. For backups, snapshot the
   VM's boot volume in the Oracle console, or:
 
