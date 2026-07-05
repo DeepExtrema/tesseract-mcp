@@ -8,6 +8,7 @@ Two rules are enforced in code, not by convention:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -32,7 +33,9 @@ class Vault:
     def in_claude(self, relative: str) -> bool:
         path = self.resolve(relative)
         claude_root = self.root / self.CLAUDE_DIR
-        return path == claude_root or claude_root in path.parents
+        norm = os.path.normcase(str(path))
+        claude_norm = os.path.normcase(str(claude_root))
+        return norm == claude_norm or norm.startswith(claude_norm + os.sep)
 
     def read(self, relative: str) -> str:
         path = self.resolve(relative)
@@ -57,6 +60,8 @@ class Vault:
     ) -> Path:
         path = self.resolve(relative)
         self._check_write_allowed(relative, confirm_outside_claude)
+        if path.is_dir():
+            raise VaultError(f"'{relative}' is a directory, not a note.")
         if path.exists() and not overwrite:
             raise VaultError(
                 f"'{relative}' already exists. Pass overwrite=True to replace it."
@@ -74,6 +79,8 @@ class Vault:
     ) -> Path:
         path = self.resolve(relative)
         self._check_write_allowed(relative, confirm_outside_claude)
+        if path.is_dir():
+            raise VaultError(f"'{relative}' is a directory, not a note.")
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(content)

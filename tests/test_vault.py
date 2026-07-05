@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from tesseract_mcp.vault import Vault, VaultError
@@ -70,3 +72,27 @@ def test_in_claude(vault):
     assert vault.in_claude("Claude/Sessions/x.md")
     assert not vault.in_claude("Daily.md")
     assert not vault.in_claude("ClaudeFake/x.md")
+
+
+@pytest.mark.skipif(
+    os.path.normcase("A") == "A",
+    reason="case-insensitive quarantine semantics only apply on case-insensitive filesystems",
+)
+def test_in_claude_case_insensitive_on_windows(vault):
+    assert vault.in_claude("claude/Sessions/x.md")
+    assert vault.in_claude("CLAUDE/Index.md")
+
+
+def test_write_to_directory_raises_vault_error(vault):
+    with pytest.raises(VaultError, match="directory"):
+        vault.write("Claude/Sessions", "x", overwrite=True)
+
+
+def test_write_to_vault_root_raises_vault_error(vault):
+    with pytest.raises(VaultError, match="directory"):
+        vault.write("", "x", overwrite=True, confirm_outside_claude=True)
+
+
+def test_append_to_directory_raises_vault_error(vault):
+    with pytest.raises(VaultError, match="directory"):
+        vault.append("Claude/Inbox", "- x\n")
