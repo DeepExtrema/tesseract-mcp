@@ -109,6 +109,11 @@ Claude Code via `claude mcp add`.
 ### Error handling
 
 - All paths normalized and validated against the vault root (no `..` escapes).
+- Quarantine comparison uses platform filesystem semantics (`os.path.normcase`:
+  case-insensitive on Windows, case-sensitive on POSIX), so case-variant paths
+  cannot dodge the `Claude/` check.
+- Writes/appends targeting an existing directory raise a clean `VaultError`
+  instead of leaking raw OS errors.
 - Writes never silently overwrite; explicit flags required.
 - Missing vault path / unreadable vault produces a clear startup error.
 - Tool errors return actionable messages (what failed, what to pass instead).
