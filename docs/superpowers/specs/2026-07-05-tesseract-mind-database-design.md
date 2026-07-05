@@ -101,9 +101,9 @@ Claude Code via `claude mcp add`.
 |---|---|
 | `search_brain(query, tags?, folder?)` | Full-text search across all `.md` files; optional filtering by frontmatter tags or subfolder. Returns path + matching excerpt per hit. |
 | `read_note(path)` | Return note content. Path validated to stay inside the vault. |
-| `log_session(title, content, project, tags)` | Create `Claude/Sessions/YYYY-MM-DD <title>.md` with frontmatter; append an entry to `Claude/Index.md`. |
+| `log_session(title, content, project, tags)` | Create `Claude/Sessions/YYYY-MM-DD <title>.md` with frontmatter; append an entry to `Claude/Index.md`. Duplicate title on the same day auto-numbers (`<title> 2.md`, …) — session logs are never overwritten. |
 | `capture(content)` | Append a timestamped bullet to the current inbox note in `Claude/Inbox/`. |
-| `upsert_concept(name, content)` | Create or extend `Claude/Concepts/<name>.md` (append under a dated heading when the note exists). |
+| `upsert_concept(name, content)` | Create or extend `Claude/Concepts/<name>.md` (append under a dated heading when the note exists). Name matching is explicitly case-insensitive (`casefold`) on all platforms, and appends preserve the existing file's on-disk name. |
 | `write_note(path, content, confirm_outside_claude=False)` | General write. **Refuses paths outside `Claude/` unless `confirm_outside_claude=True`** — the quarantine is enforced in code. Refuses to overwrite an existing file unless an explicit `overwrite=True` flag is set. |
 
 ### Error handling
