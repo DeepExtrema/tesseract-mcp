@@ -28,11 +28,14 @@ def get_vault() -> Vault:
 
 @mcp.tool()
 def search_brain(
-    query: str, tags: list[str] | None = None, folder: str | None = None
+    query: str,
+    tags: list[str] | None = None,
+    folder: str | None = None,
+    limit: int = 20,
 ) -> list[dict]:
     """Full-text search across the whole vault. Optionally filter by
     frontmatter tags or restrict to a subfolder. Returns path + excerpt."""
-    hits = search_mod.search(get_vault(), query, tags=tags, folder=folder)
+    hits = search_mod.search(get_vault(), query, tags=tags, folder=folder, limit=limit)
     return [{"path": h.path, "excerpt": h.excerpt} for h in hits]
 
 

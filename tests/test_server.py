@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from tesseract_mcp import server
 from tesseract_mcp.vault import VaultError
@@ -42,6 +43,10 @@ def test_search_brain_returns_dicts():
     ]
 
 
+def test_search_brain_limit():
+    assert len(server.search_brain("e", limit=1)) == 1
+
+
 def test_read_note():
     assert "Remember to check" in server.read_note("Daily.md")
 
@@ -72,3 +77,16 @@ def test_write_note_quarantine_enforced():
 def test_write_note_with_confirmation():
     server.write_note("Projects/Asked For.md", "yes", confirm_outside_claude=True)
     assert server.read_note("Projects/Asked For.md") == "yes"
+
+
+def test_quarantine_error_reaches_mcp_client_verbatim():
+    # In the installed mcp 1.28, FastMCP.call_tool does not return an error
+    # result — it raises mcp.server.fastmcp.exceptions.ToolError, wrapping
+    # the original exception message as "Error executing tool {name}: {msg}".
+    # We assert the quarantine message survives verbatim inside that wrapper.
+    with pytest.raises(ToolError, match="outside Claude/"):
+        asyncio.run(
+            server.mcp.call_tool(
+                "write_note", {"path": "Projects/x.md", "content": "no"}
+            )
+        )
