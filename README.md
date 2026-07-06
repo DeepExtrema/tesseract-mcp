@@ -34,6 +34,7 @@ replicates changes to all machines via CouchDB.
 | `find_entity` | Look up graph entities (people, orgs, domains, topics…) by name/alias |
 | `related_notes` | GraphRAG: notes connected via shared entities, with the connecting chain |
 | `graph_stats` | Entity/edge/mention counts for the graph |
+| `consolidate_graph` | Merge duplicate graph entities (dry-run by default) |
 
 ## The contract
 
@@ -55,5 +56,9 @@ demand with the `index_brain` tool or `python -m tesseract_mcp.indexer
 Scheduler (or a Claude Code scheduled agent) at
 `python -m tesseract_mcp.indexer C:\Vaults\Tesseract --backend codex` on a
 nightly cadence. It only processes new/changed notes, so repeat runs are cheap.
+
+To merge duplicate entities (name variants of the same thing), run
+`python -m tesseract_mcp.consolidate <vault> [--apply]` — dry-run by default;
+pass `--apply` to merge into canonical entities.
 
 Server infrastructure (CouchDB + Caddy for LiveSync) lives in `server/`.

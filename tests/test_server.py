@@ -27,6 +27,7 @@ def test_all_tools_registered():
         "upsert_concept", "write_note", "add_task", "list_tasks",
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
+        "consolidate_graph",
     }
 
 
@@ -143,3 +144,13 @@ def test_index_and_graph_tools_roundtrip(monkeypatch):
 def test_graph_tools_without_cache_raise_helpful_error():
     with pytest.raises(VaultError, match="index_brain"):
         server.find_entity("anything")
+
+
+def test_consolidate_graph_dry_run(monkeypatch):
+    class FakeBackend:
+        def complete_json(self, prompt):
+            return {"merges": []}
+
+    monkeypatch.setattr(server, "_make_extractor", lambda: FakeBackend())
+    result = server.consolidate_graph()
+    assert result["applied"] is False and result["proposed"] == []

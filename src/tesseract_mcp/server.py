@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, graph, indexer, notes, search as search_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, indexer, notes, search as search_mod, tasks as tasks_mod
 from .extractor import CliExtractor
 from .vault import Vault, VaultError
 
@@ -169,6 +169,14 @@ def related_notes(path: str, hops: int = 2) -> list[dict]:
 def graph_stats() -> dict:
     """Entity/edge/mention counts for the semantic graph."""
     return cache_mod.stats(_graph_db())
+
+
+@mcp.tool()
+def consolidate_graph(apply: bool = False) -> dict:
+    """Find duplicate graph entities (name variants of the same thing) via an
+    LLM pass. Dry-run by default — returns proposed merges for review; call
+    again with apply=True to merge them into canonical entities."""
+    return consolidate_mod.run(get_vault(), _make_extractor(), apply=apply)
 
 
 def main() -> None:
