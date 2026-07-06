@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 
@@ -81,15 +82,35 @@ def _coerce(raw: dict) -> Extraction:
 class CliExtractor:
     COMMANDS = {"codex": ["codex", "exec"], "claude": ["claude", "-p"]}
 
-    def __init__(self, backend: str | None = None, timeout: int = 120, runner=subprocess.run):
+    def __init__(
+        self,
+        backend: str | None = None,
+        timeout: int = 120,
+        runner=subprocess.run,
+        which=shutil.which,
+    ):
         self.backend = backend or os.environ.get("TESSERACT_EXTRACTOR", "codex")
         if self.backend not in self.COMMANDS:
             raise ExtractorError(f"Unknown backend: {self.backend}")
         self.timeout = timeout
         self._run = runner
+        self._which = which
+
+    def _resolve_cmd(self) -> list[str]:
+        exe, *args = self.COMMANDS[self.backend]
+        resolved = self._which(exe)
+        if not resolved:
+            raise ExtractorError(f"{self.backend} CLI not found on PATH")
+        low = resolved.lower()
+        if low.endswith((".cmd", ".bat")):
+            return ["cmd", "/c", resolved, *args]
+        if low.endswith(".ps1"):
+            return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", resolved, *args]
+        return [resolved, *args]
 
     def _invoke(self, prompt: str) -> str:
-        cmd = self.COMMANDS[self.backend]
+        cmd = self._resolve_cmd()
         try:
             proc = self._run(
                 cmd,
