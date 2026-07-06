@@ -51,4 +51,9 @@ queried through a rebuildable SQLite cache in `~/.tesseract-mcp/`. Index on
 demand with the `index_brain` tool or `python -m tesseract_mcp.indexer
 <vault>` (extraction backend: TESSERACT_EXTRACTOR=codex|claude).
 
+**Scheduled sweep:** to keep the graph fresh automatically, point Windows Task
+Scheduler (or a Claude Code scheduled agent) at
+`python -m tesseract_mcp.indexer C:\Vaults\Tesseract --backend codex` on a
+nightly cadence. It only processes new/changed notes, so repeat runs are cheap.
+
 Server infrastructure (CouchDB + Caddy for LiveSync) lives in `server/`.
