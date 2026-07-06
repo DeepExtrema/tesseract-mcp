@@ -33,10 +33,24 @@ Rules for every AI agent writing to this vault. Read this before writing.
 - `Claude/Tasks.md` — actionable follow-ups as `- [ ]` checkboxes (Obsidian
   Tasks format, due dates as `📅 YYYY-MM-DD`). Add tasks here instead of
   burying them in prose.
+- `Claude/Decisions.md` — append-only decision log, one line per decision:
+  `- YYYY-MM-DD — <decision> ([[session note]])`. Append here whenever a
+  session makes a real decision (and still narrate it in the session note).
 - `Claude/Graph/` — the semantic graph: entity notes (People, Organizations,
   Domains, Topics, Projects, Sources) maintained by `index_brain`. Fix wrong
   facts by editing entity notes directly; the graph is markdown. Prefer
   `related_notes`/`find_entity` when gathering context for a topic.
+
+## Retention
+
+- Two kinds of memory: **context** (evergreen — Sessions, Concepts,
+  Decisions) and **connections** (transient — Inbox captures, passing
+  references). Keep context; let connections expire.
+- The test before promoting anything to a Concept or Decision: *will having
+  this memory still be useful in a year?* If not, it is noise — leave it in
+  the Inbox.
+- `Claude/Inbox/` is prunable at any time. Graduate anything worth keeping
+  into Concepts, Tasks, or Decisions before pruning.
 
 ## Note format
 
