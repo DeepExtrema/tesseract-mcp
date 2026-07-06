@@ -106,3 +106,43 @@ def test_cli_rebuild_only_no_extraction(vault, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert '"rebuilt": true' in out
     assert cache.find_entity(indexer.db_path(), "acme")
+
+
+def test_failure_backoff_skips_after_three_attempts(vault):
+    for _ in range(3):
+        indexer.run(vault, FakeExtractor(fail={"Daily.md"}))
+    fx = FakeExtractor(fail={"Daily.md"})
+    counts = indexer.run(vault, fx)
+    assert "Daily.md" not in fx.calls          # skipped, not retried
+    assert counts["skipped"] == 1
+
+
+def test_force_overrides_backoff(vault):
+    for _ in range(3):
+        indexer.run(vault, FakeExtractor(fail={"Daily.md"}))
+    fx = FakeExtractor()
+    indexer.run(vault, fx, force=True)
+    assert "Daily.md" in fx.calls
+
+
+def test_success_clears_attempt_count(vault):
+    indexer.run(vault, FakeExtractor(fail={"Daily.md"}))
+    indexer.run(vault, FakeExtractor())        # succeeds now
+    manifest = indexer.load_manifest()
+    assert "Daily.md" not in manifest["failures"]
+
+
+def test_old_string_failure_format_migrates(vault):
+    indexer.state_dir()
+    indexer.save_manifest({"hashes": {}, "failures": {"Daily.md": "old error"}})
+    manifest = indexer.load_manifest()
+    assert manifest["failures"]["Daily.md"]["attempts"] == 1
+
+
+def test_rebuild_skipped_when_nothing_processed(vault, monkeypatch):
+    indexer.run(vault, FakeExtractor())        # first run indexes everything
+    calls = []
+    from tesseract_mcp import cache
+    monkeypatch.setattr(cache, "rebuild", lambda v, p: calls.append(1))
+    indexer.run(vault, FakeExtractor())        # no changes -> no rebuild
+    assert calls == []

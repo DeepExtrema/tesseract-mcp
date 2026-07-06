@@ -16,6 +16,7 @@ from .vault import Vault
 
 DEFAULT_IGNORE = ("copilot",)
 DEFAULT_BATCH = 25
+MAX_ATTEMPTS = 3
 
 
 def state_dir() -> Path:
@@ -36,8 +37,13 @@ def db_path() -> Path:
 def load_manifest() -> dict:
     p = _manifest_path()
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
-    return {"hashes": {}, "failures": {}}
+        manifest = json.loads(p.read_text(encoding="utf-8"))
+    else:
+        manifest = {"hashes": {}, "failures": {}}
+    for rel, val in list(manifest.get("failures", {}).items()):
+        if isinstance(val, str):
+            manifest["failures"][rel] = {"error": val, "attempts": 1}
+    return manifest
 
 
 def save_manifest(manifest: dict) -> None:
@@ -70,27 +76,36 @@ def run(
 ) -> dict:
     manifest = load_manifest()
     current = scan_notes(vault, ignore)
+    skipped = 0
     if force:
         pending = list(current)
     else:
-        pending = [
-            rel
-            for rel, digest in current.items()
-            if manifest["hashes"].get(rel) != digest or rel in manifest["failures"]
-        ]
+        pending = []
+        for rel, digest in current.items():
+            failure = manifest["failures"].get(rel)
+            if failure and failure["attempts"] >= MAX_ATTEMPTS:
+                skipped += 1
+                continue
+            if manifest["hashes"].get(rel) != digest or failure:
+                pending.append(rel)
     todo, remaining = pending[:batch], max(0, len(pending) - batch)
 
     store = GraphStore(vault)
     counts = {"processed": 0, "entities_created": 0, "entities_merged": 0,
-              "mentions_added": 0, "relations_added": 0, "failed": 0,
-              "remaining": remaining}
+              "mentions_added": 0, "relations_added": 0,
+              "mentions_retracted": 0, "failed": 0,
+              "skipped": skipped, "remaining": remaining}
     for rel in todo:
         try:
             extraction = extractor.extract(rel, vault.read(rel))
         except ExtractorError as e:
-            manifest["failures"][rel] = str(e)[:300]
+            prev = manifest["failures"].get(rel, {"attempts": 0})
+            manifest["failures"][rel] = {
+                "error": str(e)[:300], "attempts": prev["attempts"] + 1
+            }
             counts["failed"] += 1
             continue
+        counts["mentions_retracted"] += _retract_stale_mentions(vault, store, rel)
         applied = store.apply(rel, extraction)
         for key in ("entities_created", "entities_merged", "mentions_added", "relations_added"):
             counts[key] += applied[key]
@@ -98,8 +113,13 @@ def run(
         manifest["failures"].pop(rel, None)
         counts["processed"] += 1
     save_manifest(manifest)
-    cache.rebuild(vault, db_path())
+    if counts["processed"] or not db_path().exists():
+        cache.rebuild(vault, db_path())
     return counts
+
+
+def _retract_stale_mentions(vault: Vault, store: GraphStore, rel: str) -> int:
+    return 0
 
 
 def main() -> None:
