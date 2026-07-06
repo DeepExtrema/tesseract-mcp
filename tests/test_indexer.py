@@ -146,3 +146,18 @@ def test_rebuild_skipped_when_nothing_processed(vault, monkeypatch):
     monkeypatch.setattr(cache, "rebuild", lambda v, p: calls.append(1))
     indexer.run(vault, FakeExtractor())        # no changes -> no rebuild
     assert calls == []
+
+
+def test_stale_mentions_retracted_on_reprocess(vault):
+    from tesseract_mcp.graphstore import entity_rel_path
+
+    vault.write("Claude/Inbox/story.md", "About Acme.")
+    fx = FakeExtractor({"Claude/Inbox/story.md": Extraction([ACME], [])})
+    indexer.run(vault, fx)
+    acme_rel = entity_rel_path("organization", "Acme Corp")
+    assert "[[Claude/Inbox/story|" in vault.read(acme_rel)
+
+    vault.write("Claude/Inbox/story.md", "Actually about nothing.", overwrite=True)
+    counts = indexer.run(vault, FakeExtractor())   # re-extraction finds no entities
+    assert counts["mentions_retracted"] == 1
+    assert "[[Claude/Inbox/story|" not in vault.read(acme_rel)

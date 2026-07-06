@@ -98,3 +98,9 @@ def test_same_name_different_type_not_conflated(vault, tmp_path):
 def test_related_notes_excludes_self_without_md_suffix(populated, vault):
     got = cache.related_notes(populated, vault, "Claude/Inbox/interview", hops=1)  # no .md
     assert "Claude/Inbox/interview.md" not in [r["path"] for r in got]
+
+
+def test_note_entity_paths(populated, vault):
+    got = cache.note_entity_paths(populated, "Claude/Inbox/interview.md")
+    assert got == ["Claude/Graph/Organizations/Acme Corp"]
+    assert cache.note_entity_paths(populated, "Nope.md") == []

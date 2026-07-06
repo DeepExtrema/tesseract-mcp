@@ -92,6 +92,17 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+def note_entity_paths(db_path: Path, note_path: str) -> list[str]:
+    """Entity paths (no .md) that a note currently mentions, per the cache."""
+    lookup = note_path[:-3] if note_path.endswith(".md") else note_path
+    con = _connect(db_path)
+    rows = con.execute(
+        "SELECT DISTINCT entity_path FROM mentions WHERE note_path = ?", (lookup,)
+    ).fetchall()
+    con.close()
+    return sorted(r["entity_path"] for r in rows)
+
+
 def _path_name_map(con: sqlite3.Connection) -> dict[str, str]:
     return {r["path"]: r["name"] for r in con.execute("SELECT path, name FROM entities")}
 

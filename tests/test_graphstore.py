@@ -120,3 +120,15 @@ def test_relation_entity_not_extracted_gets_stub(vault):
     counts = store.apply("Daily.md", Extraction([ACME], [REL]))
     assert vault.resolve(entity_rel_path("domain", "Supply Chain")).exists()
     assert counts["entities_created"] == 2
+
+
+def test_remove_mention(vault):
+    store = GraphStore(vault)
+    rel = store.upsert_entity(ACME)
+    store.add_mention(rel, "A/Report.md", "in A")
+    store.add_mention(rel, "B/Report.md", "in B")
+    assert store.remove_mention(rel, "A/Report.md") is True
+    body = vault.read(rel)
+    assert "[[A/Report|" not in body
+    assert "[[B/Report|" in body                  # other mention intact
+    assert store.remove_mention(rel, "A/Report.md") is False  # idempotent

@@ -127,6 +127,16 @@ class GraphStore:
         line = f"- [[{target}|{stem}]]" + (f" — {evidence}" if evidence else "")
         return self._insert_line(entity_rel, MENTIONS_HEADER, line, marker)
 
+    def remove_mention(self, entity_rel: str, note_path: str) -> bool:
+        target = note_path[:-3] if note_path.endswith(".md") else note_path
+        marker = f"[[{target}|"
+        text = self.vault.read(entity_rel)
+        kept = [l for l in text.splitlines(keepends=True) if marker not in l]
+        if len(kept) == len(text.splitlines(keepends=True)):
+            return False
+        self.vault.write(entity_rel, "".join(kept), overwrite=True)
+        return True
+
     def add_relation(self, src_rel: str, relation: str, dst_rel: str) -> bool:
         dst_target = dst_rel[:-3] if dst_rel.endswith(".md") else dst_rel
         dst_stem = Path(dst_rel).stem

@@ -12,7 +12,7 @@ from . import cache
 from .extractor import CliExtractor, ExtractorError
 from .graphstore import GRAPH_ROOT, GraphStore
 from .search import SKIP_DIRS
-from .vault import Vault
+from .vault import Vault, VaultError
 
 DEFAULT_IGNORE = ("copilot",)
 DEFAULT_BATCH = 25
@@ -119,7 +119,18 @@ def run(
 
 
 def _retract_stale_mentions(vault: Vault, store: GraphStore, rel: str) -> int:
-    return 0
+    db = db_path()
+    if not db.exists():
+        return 0
+    removed = 0
+    for entity_path in cache.note_entity_paths(db, rel):
+        entity_rel = entity_path + ".md"
+        try:
+            if store.remove_mention(entity_rel, rel):
+                removed += 1
+        except VaultError:
+            continue  # entity note deleted/renamed by hand — nothing to retract
+    return removed
 
 
 def main() -> None:
