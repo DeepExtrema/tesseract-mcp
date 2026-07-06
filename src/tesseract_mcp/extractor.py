@@ -161,15 +161,20 @@ class CliExtractor:
 
         raise ExtractorError("no JSON object in extractor output")
 
-    def extract(self, path: str, content: str) -> Extraction:
-        prompt = PROMPT_TEMPLATE.format(path=path, content=content)
+    def complete_json(self, prompt: str) -> dict:
+        """Send any prompt via the CLI backend; return its JSON object reply
+        (one repair retry, then ExtractorError)."""
         out = self._invoke(prompt)
         try:
-            return _coerce(self._parse(out))
+            return self._parse(out)
         except (ExtractorError, json.JSONDecodeError):
             repair = prompt + "\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object."
             out = self._invoke(repair)
             try:
-                return _coerce(self._parse(out))
+                return self._parse(out)
             except json.JSONDecodeError as e:
                 raise ExtractorError(f"invalid JSON after retry: {e}") from e
+
+    def extract(self, path: str, content: str) -> Extraction:
+        prompt = PROMPT_TEMPLATE.format(path=path, content=content)
+        return _coerce(self.complete_json(prompt))

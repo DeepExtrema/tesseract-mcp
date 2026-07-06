@@ -226,3 +226,16 @@ def test_resolve_missing_binary_raises():
     ex = CliExtractor(backend="codex", which=lambda n: None)
     with pytest.raises(ExtractorError, match="not found on PATH"):
         ex.extract("N.md", "c")
+
+
+def test_complete_json_generic_prompt():
+    runner = make_runner([FakeProc(stdout='{"merges": []}')])
+    ex = CliExtractor(backend="codex", runner=runner, which=lambda n: n)
+    assert ex.complete_json("any prompt") == {"merges": []}
+
+
+def test_complete_json_retries_then_raises():
+    runner = make_runner([FakeProc(stdout="junk"), FakeProc(stdout="junk2")])
+    ex = CliExtractor(backend="codex", runner=runner, which=lambda n: n)
+    with pytest.raises(ExtractorError):
+        ex.complete_json("p")
