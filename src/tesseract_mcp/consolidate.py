@@ -16,6 +16,7 @@ from .graphstore import (
     RELATIONS_HEADER,
     GraphStore,
     TYPE_FOLDERS,
+    entity_rel_path,
 )
 from .indexer import db_path
 from .search import parse_frontmatter
@@ -90,11 +91,34 @@ def propose_merges(backend, entities: list[dict]) -> list[dict]:
     return merges
 
 
+def _resolve_dup_note(vault: Vault, etype: str, name: str) -> str | None:
+    """Find duplicate entity note by filename/stem only — not aliases."""
+    rel = entity_rel_path(etype, name)
+    path = vault.resolve(rel)
+    if path.exists():
+        if parse_frontmatter(path.read_text(encoding="utf-8")).get("merged_into"):
+            return None
+        return rel
+    folder = vault.resolve(f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}")
+    if not folder.is_dir():
+        return None
+    needle = name.casefold()
+    for p in sorted(folder.glob("*.md")):
+        if p.stem.casefold() != needle:
+            continue
+        if parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore")).get(
+            "merged_into"
+        ):
+            return None
+        return f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
+    return None
+
+
 def _apply_one(vault: Vault, store: GraphStore, merge: dict, now: datetime) -> None:
     etype = merge["type"]
     canon_rel = store.find_entity_note(etype, merge["canonical"])
     for dup_name in merge["duplicates"]:
-        dup_rel = store.find_entity_note(etype, dup_name)
+        dup_rel = _resolve_dup_note(vault, etype, dup_name)
         if dup_rel is None or dup_rel == canon_rel or canon_rel is None:
             continue
         dup_text = vault.read(dup_rel)

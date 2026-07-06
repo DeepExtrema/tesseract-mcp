@@ -1,6 +1,9 @@
+import yaml
+
 from tesseract_mcp import cache, consolidate
 from tesseract_mcp.extractor import Extraction
 from tesseract_mcp.graphstore import GraphStore, entity_rel_path
+from tesseract_mcp.search import parse_frontmatter
 
 ORACLE_VM = {"name": "Oracle VM", "type": "organization", "aliases": [], "summary": "Cloud VM."}
 ORACLE_DEPLOY = {"name": "Oracle VM deploy", "type": "organization", "aliases": [], "summary": "Deploying it."}
@@ -68,6 +71,20 @@ def test_apply_merges_mentions_relations_aliases_and_redirects(vault):
     assert "Oracle VM deploy" in canon          # name folded into aliases
     dup = vault.read(entity_rel_path("organization", "Oracle VM deploy"))
     assert "merged_into:" in dup and "Merged into [[Oracle VM]]" in dup
+
+
+def test_apply_merge_finds_dup_by_filename_when_canonical_has_alias(vault):
+    seed(vault)
+    canon_rel = entity_rel_path("organization", "Oracle VM")
+    canon_text = vault.read(canon_rel)
+    meta = parse_frontmatter(canon_text)
+    meta["aliases"] = ["Oracle VM deploy"]
+    end = canon_text.find("\n---", 3)
+    fm = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---"
+    vault.write(canon_rel, fm + canon_text[end + 4 :], overwrite=True)
+    consolidate.run(vault, FakeBackend(MERGE), apply=True)
+    dup = vault.read(entity_rel_path("organization", "Oracle VM deploy"))
+    assert "merged_into:" in dup
 
 
 def test_cache_rebuild_skips_redirect_stubs(vault, tmp_path):
