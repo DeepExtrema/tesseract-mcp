@@ -25,6 +25,11 @@ replicates changes to all machines via CouchDB.
 | `capture` | Quick thought into `Claude/Inbox/` |
 | `upsert_concept` | Evergreen notes in `Claude/Concepts/` |
 | `write_note` | General write — quarantined to `Claude/` unless explicitly confirmed |
+| `add_task` | Add a checkbox task to `Claude/Tasks.md` in Obsidian Tasks-plugin format, optional due date |
+| `list_tasks` | List checkbox tasks across the vault (open only by default) |
+| `query_notes` | Query notes by frontmatter metadata (Dataview-style) |
+| `get_backlinks` | List notes whose `[[wikilinks]]` point at a given note |
+| `list_recent` | Most recently modified notes, newest first |
 
 ## The contract
 

@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import notes, search as search_mod
+from . import graph, notes, search as search_mod, tasks as tasks_mod
 from .vault import Vault, VaultError
 
 mcp = FastMCP("tesseract")
@@ -86,6 +86,48 @@ def write_note(
         confirm_outside_claude=confirm_outside_claude,
     )
     return path
+
+
+@mcp.tool()
+def add_task(content: str, due: str | None = None) -> str:
+    """Add a checkbox task to Claude/Tasks.md in Obsidian Tasks-plugin format.
+    Optional due date as YYYY-MM-DD."""
+    return tasks_mod.add_task(get_vault(), content, due=due)
+
+
+@mcp.tool()
+def list_tasks(include_done: bool = False, folder: str | None = None) -> list[dict]:
+    """List checkbox tasks across the vault (open only by default)."""
+    return tasks_mod.list_tasks(get_vault(), include_done=include_done, folder=folder)
+
+
+@mcp.tool()
+def query_notes(
+    project: str | None = None,
+    tags: list[str] | None = None,
+    folder: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Query notes by frontmatter metadata (Dataview-style). Returns each
+    note's path and frontmatter. Without filters, lists notes that have
+    frontmatter."""
+    return graph.query_notes(
+        get_vault(), project=project, tags=tags, folder=folder, limit=limit
+    )
+
+
+@mcp.tool()
+def get_backlinks(path: str) -> list[str]:
+    """List notes whose [[wikilinks]] point at the given note — use to see
+    how a topic connects before extending it."""
+    return graph.get_backlinks(get_vault(), path)
+
+
+@mcp.tool()
+def list_recent(n: int = 10) -> list[dict]:
+    """Most recently modified notes, newest first — use to catch up on what
+    changed in the vault."""
+    return graph.list_recent(get_vault(), n=n)
 
 
 def main() -> None:

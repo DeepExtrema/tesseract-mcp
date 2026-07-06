@@ -17,19 +17,22 @@ class Hit:
     excerpt: str
 
 
-def _frontmatter_tags(text: str) -> list[str]:
+def parse_frontmatter(text: str) -> dict:
+    """Parse the leading YAML frontmatter block; {} on any failure."""
     if not text.startswith("---"):
-        return []
+        return {}
     end = text.find("\n---", 3)
     if end == -1:
-        return []
+        return {}
     try:
         meta = yaml.safe_load(text[3:end])
     except yaml.YAMLError:
-        return []
-    if not isinstance(meta, dict):
-        return []
-    tags = meta.get("tags") or []
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _frontmatter_tags(text: str) -> list[str]:
+    tags = parse_frontmatter(text).get("tags") or []
     if not isinstance(tags, list):
         tags = [tags]
     return [str(t) for t in tags]

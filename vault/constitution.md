@@ -30,6 +30,9 @@ Rules for every AI agent writing to this vault. Read this before writing.
   same note). Extend under dated `## Update` headings; never silently rewrite
   history.
 - `Claude/Index.md` — map of contents. Append a line per new session note.
+- `Claude/Tasks.md` — actionable follow-ups as `- [ ]` checkboxes (Obsidian
+  Tasks format, due dates as `📅 YYYY-MM-DD`). Add tasks here instead of
+  burying them in prose.
 
 ## Note format
 

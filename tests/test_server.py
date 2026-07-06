@@ -24,6 +24,11 @@ def test_all_tools_registered():
         "capture",
         "upsert_concept",
         "write_note",
+        "add_task",
+        "list_tasks",
+        "query_notes",
+        "get_backlinks",
+        "list_recent",
     }
 
 
@@ -90,3 +95,22 @@ def test_quarantine_error_reaches_mcp_client_verbatim():
                 "write_note", {"path": "Projects/x.md", "content": "no"}
             )
         )
+
+
+def test_add_and_list_tasks_roundtrip():
+    server.add_task("torture the tests", due="2026-07-09")
+    got = server.list_tasks()
+    assert any(t["text"].startswith("torture the tests") for t in got)
+
+
+def test_query_notes_roundtrip():
+    assert any(
+        r["path"] == "Projects/Sentinel ESG.md"
+        for r in server.query_notes(tags=["esg"])
+    )
+
+
+def test_backlinks_and_recent_roundtrip():
+    server.capture("see [[CouchDB]] note")
+    assert any("Inbox" in p for p in server.get_backlinks("Claude/Concepts/CouchDB.md"))
+    assert server.list_recent(n=3)
