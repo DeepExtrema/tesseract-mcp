@@ -11,8 +11,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 CONSTITUTION = REPO_ROOT / "vault" / "constitution.md"
+ROOT_GUIDE = REPO_ROOT / "vault" / "root-guide.md"
 
 INDEX_SEED = "# Index\n\nMap of agent-written notes. Session entries append below.\n\n"
+
+DECISIONS_SEED = (
+    "---\ncreated: 2026-07-06\nagent: claude\ntags: [decisions]\n---\n\n"
+    "# Decisions\n\n"
+    "Append-only log. One line per decision:\n"
+    "`- YYYY-MM-DD — <decision> ([[session note]])`\n\n"
+)
 
 
 def install(vault_root: Path) -> list[str]:
@@ -37,6 +45,18 @@ def install(vault_root: Path) -> list[str]:
     if not index.exists():
         index.write_text(INDEX_SEED, encoding="utf-8")
         created.append("Claude/Index.md")
+
+    decisions = claude / "Decisions.md"
+    if not decisions.exists():
+        decisions.write_text(DECISIONS_SEED, encoding="utf-8")
+        created.append("Claude/Decisions.md")
+
+    guide_text = ROOT_GUIDE.read_text(encoding="utf-8")
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        guide = vault_root / name
+        if not guide.exists():
+            guide.write_text(guide_text, encoding="utf-8")
+            created.append(name)
 
     return created
 
