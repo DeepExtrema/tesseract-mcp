@@ -6,7 +6,8 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import graph, notes, search as search_mod, tasks as tasks_mod
+from . import cache as cache_mod, graph, indexer, notes, search as search_mod, tasks as tasks_mod
+from .extractor import CliExtractor
 from .vault import Vault, VaultError
 
 mcp = FastMCP("tesseract")
@@ -128,6 +129,46 @@ def list_recent(n: int = 10) -> list[dict]:
     """Most recently modified notes, newest first — use to catch up on what
     changed in the vault."""
     return graph.list_recent(get_vault(), n=n)
+
+
+def _make_extractor():
+    return CliExtractor()
+
+
+def _graph_db():
+    db = indexer.db_path()
+    if not db.exists():
+        raise VaultError("Graph cache not built yet — run index_brain first.")
+    return db
+
+
+@mcp.tool()
+def index_brain(force: bool = False) -> dict:
+    """Index new/changed vault notes into the semantic graph (LLM entity
+    extraction via the configured CLI backend). Returns counts including
+    'remaining' — call again if remaining > 0. force=True re-indexes all."""
+    return indexer.run(get_vault(), _make_extractor(), force=force)
+
+
+@mcp.tool()
+def find_entity(query: str, type: str | None = None) -> list[dict]:
+    """Look up graph entities by name or alias (case-insensitive substring).
+    Optional type filter: person, organization, domain, topic, project, source."""
+    return cache_mod.find_entity(_graph_db(), query, type=type)
+
+
+@mcp.tool()
+def related_notes(path: str, hops: int = 2) -> list[dict]:
+    """Notes connected to the given note through shared graph entities within
+    N hops. Each result includes the entity chain explaining the connection —
+    the GraphRAG way to gather context beyond text search."""
+    return cache_mod.related_notes(_graph_db(), get_vault(), path, hops=hops)
+
+
+@mcp.tool()
+def graph_stats() -> dict:
+    """Entity/edge/mention counts for the semantic graph."""
+    return cache_mod.stats(_graph_db())
 
 
 def main() -> None:

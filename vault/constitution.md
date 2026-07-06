@@ -33,6 +33,10 @@ Rules for every AI agent writing to this vault. Read this before writing.
 - `Claude/Tasks.md` — actionable follow-ups as `- [ ]` checkboxes (Obsidian
   Tasks format, due dates as `📅 YYYY-MM-DD`). Add tasks here instead of
   burying them in prose.
+- `Claude/Graph/` — the semantic graph: entity notes (People, Organizations,
+  Domains, Topics, Projects, Sources) maintained by `index_brain`. Fix wrong
+  facts by editing entity notes directly; the graph is markdown. Prefer
+  `related_notes`/`find_entity` when gathering context for a topic.
 
 ## Note format
 

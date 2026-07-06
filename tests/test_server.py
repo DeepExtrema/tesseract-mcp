@@ -15,20 +15,18 @@ def point_at_fixture_vault(vault_dir, monkeypatch):
     server._vault = None
 
 
+@pytest.fixture(autouse=True)
+def isolated_graph_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "graph-state"))
+
+
 def test_all_tools_registered():
     tools = asyncio.run(server.mcp.list_tools())
     assert {t.name for t in tools} == {
-        "search_brain",
-        "read_note",
-        "log_session",
-        "capture",
-        "upsert_concept",
-        "write_note",
-        "add_task",
-        "list_tasks",
-        "query_notes",
-        "get_backlinks",
-        "list_recent",
+        "search_brain", "read_note", "log_session", "capture",
+        "upsert_concept", "write_note", "add_task", "list_tasks",
+        "query_notes", "get_backlinks", "list_recent",
+        "index_brain", "find_entity", "related_notes", "graph_stats",
     }
 
 
@@ -114,3 +112,34 @@ def test_backlinks_and_recent_roundtrip():
     server.capture("see [[CouchDB]] note")
     assert any("Inbox" in p for p in server.get_backlinks("Claude/Concepts/CouchDB.md"))
     assert server.list_recent(n=3)
+
+
+def test_index_and_graph_tools_roundtrip(monkeypatch):
+    from tesseract_mcp.extractor import Extraction
+
+    class FakeExtractor:
+        def extract(self, path, content):
+            if "Sentinel" in path:
+                return Extraction(
+                    [{"name": "Acme Corp", "type": "organization", "aliases": [], "summary": "Co."}],
+                    [],
+                )
+            return Extraction()
+
+    monkeypatch.setattr(server, "_make_extractor", lambda: FakeExtractor())
+    counts = server.index_brain()
+    assert counts["processed"] > 0 and counts["entities_created"] == 1
+
+    found = server.find_entity("acme")
+    assert found and found[0]["type"] == "organization"
+
+    related = server.related_notes("Projects/Sentinel ESG.md")
+    assert isinstance(related, list)
+
+    s = server.graph_stats()
+    assert s["entities"]["organization"] == 1
+
+
+def test_graph_tools_without_cache_raise_helpful_error():
+    with pytest.raises(VaultError, match="index_brain"):
+        server.find_entity("anything")

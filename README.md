@@ -30,6 +30,10 @@ replicates changes to all machines via CouchDB.
 | `query_notes` | Query notes by frontmatter metadata (Dataview-style) |
 | `get_backlinks` | List notes whose `[[wikilinks]]` point at a given note |
 | `list_recent` | Most recently modified notes, newest first |
+| `index_brain` | Extract entities from new/changed notes into the semantic graph |
+| `find_entity` | Look up graph entities (people, orgs, domains, topics…) by name/alias |
+| `related_notes` | GraphRAG: notes connected via shared entities, with the connecting chain |
+| `graph_stats` | Entity/edge/mention counts for the graph |
 
 ## The contract
 
@@ -37,5 +41,14 @@ Agents write proactively **only inside `Claude/`**. Everything else is
 read-only unless the user explicitly asks. The quarantine is enforced in
 code (`vault.py`), and the human-readable rules live in the vault at
 `Claude/README.md`.
+
+## The semantic graph
+
+`Claude/Graph/` holds LLM-extracted entity notes (People/, Organizations/,
+Domains/, Topics/, Projects/, Sources/) whose wikilinks connect source notes
+into a typed knowledge graph — visible in Obsidian, synced by LiveSync,
+queried through a rebuildable SQLite cache in `~/.tesseract-mcp/`. Index on
+demand with the `index_brain` tool or `python -m tesseract_mcp.indexer
+<vault>` (extraction backend: TESSERACT_EXTRACTOR=codex|claude).
 
 Server infrastructure (CouchDB + Caddy for LiveSync) lives in `server/`.
