@@ -10,7 +10,7 @@ import yaml
 from .extractor import Extraction
 from .notes import AGENT_NAME, safe_filename
 from .search import parse_frontmatter
-from .vault import Vault, VaultError
+from .vault import Vault
 
 GRAPH_ROOT = "Claude/Graph"
 TYPE_FOLDERS = {
@@ -78,19 +78,26 @@ class GraphStore:
             rel = entity_rel_path(ent["type"], ent["name"])
             self.vault.write(rel, _note_template(ent, now))
             return rel, True
-        # merge new aliases into frontmatter (append-only semantics)
-        new_aliases = [a for a in (ent.get("aliases") or []) if a]
-        if new_aliases:
-            text = self.vault.read(existing)
-            meta = parse_frontmatter(text)
+        # merge new aliases (and a colliding display name) into frontmatter
+        text = self.vault.read(existing)
+        meta = parse_frontmatter(text)
+        # the note's canonical name is its H1; a differing incoming name is a
+        # safe_filename collision we must not silently drop — record it as alias
+        note_name = existing.rsplit("/", 1)[-1][:-3]
+        candidates = [a for a in (ent.get("aliases") or []) if a]
+        if ent["name"].casefold() != note_name.casefold():
+            candidates.append(ent["name"])
+        if candidates:
             current = meta.get("aliases") or []
             if not isinstance(current, list):
                 current = [current]
-            known = {str(a).casefold() for a in current} | {ent["name"].casefold()}
-            added = [a for a in new_aliases if a.casefold() not in known]
+            known = {str(a).casefold() for a in current} | {note_name.casefold()}
+            added = [a for a in candidates if a.casefold() not in known]
             if added:
-                meta["aliases"] = [str(a) for a in current] + added
                 end = text.find("\n---", 3)
+                if end == -1:
+                    return existing, False  # malformed frontmatter; do not corrupt
+                meta["aliases"] = [str(a) for a in current] + added
                 body = text[end + 4 :]
                 fm = "---\n" + yaml.safe_dump(meta, sort_keys=False, default_flow_style=None) + "---"
                 self.vault.write(existing, fm + body, overwrite=True)
@@ -114,9 +121,11 @@ class GraphStore:
         return True
 
     def add_mention(self, entity_rel: str, note_path: str, evidence: str) -> bool:
+        target = note_path[:-3] if note_path.endswith(".md") else note_path
         stem = Path(note_path).stem
-        line = f"- [[{stem}]]" + (f" — {evidence}" if evidence else "")
-        return self._insert_line(entity_rel, MENTIONS_HEADER, line, f"[[{stem}]]")
+        marker = f"[[{target}|"  # unique per source note; dedup on this
+        line = f"- [[{target}|{stem}]]" + (f" — {evidence}" if evidence else "")
+        return self._insert_line(entity_rel, MENTIONS_HEADER, line, marker)
 
     def add_relation(self, src_rel: str, relation: str, dst_rel: str) -> bool:
         dst_stem = Path(dst_rel).stem
