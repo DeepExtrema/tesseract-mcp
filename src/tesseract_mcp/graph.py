@@ -11,6 +11,16 @@ from .vault import Vault
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 
 
+def _json_safe(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return str(value)  # dates and anything exotic -> ISO-ish string
+
+
 def _vault_files(vault: Vault, folder: str | None = None):
     base = vault.resolve(folder) if folder else vault.root
     for path in sorted(base.rglob("*.md")):
@@ -42,7 +52,7 @@ def query_notes(
                 continue
         if project is None and not tags and not meta:
             continue  # plain listing: only notes WITH frontmatter
-        results.append({"path": rel, "frontmatter": {k: str(v) for k, v in meta.items()}})
+        results.append({"path": rel, "frontmatter": {k: _json_safe(v) for k, v in meta.items()}})
         if len(results) >= limit:
             break
     return results

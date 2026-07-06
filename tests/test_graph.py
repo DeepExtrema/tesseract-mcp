@@ -45,6 +45,29 @@ def test_backlinks_excludes_self(vault):
     assert graph.get_backlinks(vault, "Claude/Concepts/SelfRef.md") == []
 
 
+def test_query_notes_preserves_json_types(vault):
+    vault.write(
+        "Claude/Concepts/Typed.md",
+        "---\ncreated: 2026-07-05\nproject: typed\ntags: [a, b]\ncount: 3\ndone: true\n---\n\nBody.\n",
+    )
+    got = graph.query_notes(vault, project="typed")
+    fm = got[0]["frontmatter"]
+    assert fm["tags"] == ["a", "b"]
+    assert fm["count"] == 3
+    assert fm["done"] is True
+    assert isinstance(fm["created"], str) and fm["created"].startswith("2026-07-05")
+
+
+def test_query_notes_output_is_json_serializable(vault):
+    import json
+
+    vault.write(
+        "Claude/Concepts/Dated.md",
+        "---\ncreated: 2026-07-05\nproject: dated\n---\n\nBody.\n",
+    )
+    json.dumps(graph.query_notes(vault, project="dated"))  # must not raise
+
+
 def test_list_recent_orders_newest_first(vault):
     import os
     import time

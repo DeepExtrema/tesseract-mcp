@@ -17,7 +17,7 @@ def add_task(vault: Vault, content: str, due: str | None = None) -> str:
     """Append a Tasks-plugin-format checkbox to Claude/Tasks.md."""
     if not vault.resolve(TASKS_FILE).exists():
         vault.write(TASKS_FILE, TASKS_SEED)
-    line = f"- [ ] {content.strip()}"
+    line = f"- [ ] {' '.join(content.split())}"
     if due:
         datetime.strptime(due, "%Y-%m-%d")  # validate; raises ValueError if bad
         line += f" \U0001F4C5 {due}"

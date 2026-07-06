@@ -49,3 +49,14 @@ def test_list_tasks_folder_filter(vault):
     vault.write("Claude/Inbox/todo.md", "- [ ] in claude\n")
     got = tasks.list_tasks(vault, folder="Claude")
     assert all(t["path"].startswith("Claude/") for t in got)
+
+
+def test_add_task_collapses_multiline_content(vault):
+    tasks.add_task(vault, "line one\nline two\t end")
+    body = vault.read("Claude/Tasks.md")
+    assert "- [ ] line one line two end" in body
+    got = tasks.list_tasks(vault)
+    assert any(t["text"] == "line one line two end" for t in got)
+    # no orphan non-checkbox lines after the seed content
+    lines = [l for l in body.splitlines() if l and not l.startswith(("---", "#", "- [", "agent:", "tags:"))]
+    assert lines == []
