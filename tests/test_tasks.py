@@ -9,6 +9,7 @@ def test_add_task_creates_seeded_file(vault):
     body = vault.read(rel)
     assert body.startswith("---\n")
     assert "# Tasks" in body
+    assert "```tasks" in body
     assert "- [ ] review LiveSync logs" in body
 
 
@@ -57,6 +58,13 @@ def test_add_task_collapses_multiline_content(vault):
     assert "- [ ] line one line two end" in body
     got = tasks.list_tasks(vault)
     assert any(t["text"] == "line one line two end" for t in got)
-    # no orphan non-checkbox lines after the seed content
-    lines = [l for l in body.splitlines() if l and not l.startswith(("---", "#", "- [", "agent:", "tags:"))]
+    # no orphan non-checkbox lines after the seed content / view block
+    known_view_lines = {"```tasks", "not done", "group by filename", "```"}
+    lines = [
+        l
+        for l in body.splitlines()
+        if l
+        and l not in known_view_lines
+        and not l.startswith(("---", "#", "- [", "agent:", "tags:"))
+    ]
     assert lines == []

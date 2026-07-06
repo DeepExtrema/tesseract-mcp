@@ -9,7 +9,12 @@ from .search import SKIP_DIRS
 from .vault import Vault
 
 TASKS_FILE = "Claude/Tasks.md"
-TASKS_SEED = "---\nagent: claude\ntags: [tasks]\n---\n\n# Tasks\n\n"
+TASKS_SEED = (
+    "---\nagent: claude\ntags: [tasks]\n---\n\n# Tasks\n\n"
+    "## Live view (all open tasks, vault-wide)\n\n"
+    "```tasks\nnot done\ngroup by filename\n```\n\n"
+    "## Open\n\n"
+)
 _TASK_LINE = re.compile(r"^\s*[-*] \[(?P<state>[ xX])\] (?P<text>.+)$")
 
 

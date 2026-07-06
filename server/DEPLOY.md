@@ -44,6 +44,12 @@ Then create the LiveSync database:
     curl -u "$COUCHDB_USER:$COUCHDB_PASSWORD" -X PUT https://$DOMAIN/tesseract
     # expect: {"ok":true}
 
+> **WARNING — E2E passphrase:** LiveSync's end-to-end encryption passphrase is
+> set once during LiveSync setup and stored ONLY in your password manager. If
+> it is lost, every synced copy in CouchDB is permanently unreadable — the
+> server cannot recover it. The markdown vault on your machines remains the
+> system of record; CouchDB is a relay, not a backup.
+
 ## Maintenance
 
 - `docker compose pull && docker compose up -d` occasionally for updates.

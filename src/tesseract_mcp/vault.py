@@ -69,7 +69,9 @@ class Vault:
                 f"'{relative}' already exists. Pass overwrite=True to replace it."
             )
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp-write")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
         return path
 
     def append(

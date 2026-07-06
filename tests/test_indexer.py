@@ -90,3 +90,19 @@ def test_run_rebuilds_cache(vault):
     db = indexer.state_dir() / "graph.db"
     assert db.exists()
     assert cache.find_entity(db, "acme")
+
+
+def test_cli_rebuild_only_no_extraction(vault, capsys, monkeypatch):
+    import sys
+    from tesseract_mcp import cache
+    from tesseract_mcp.graphstore import GraphStore
+    from tesseract_mcp.extractor import Extraction
+
+    GraphStore(vault).apply("Daily.md", Extraction([ACME], []))
+    monkeypatch.setattr(
+        sys, "argv", ["indexer", str(vault.root), "--rebuild-only"]
+    )
+    indexer.main()
+    out = capsys.readouterr().out
+    assert '"rebuilt": true' in out
+    assert cache.find_entity(indexer.db_path(), "acme")

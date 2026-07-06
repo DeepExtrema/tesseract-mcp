@@ -101,3 +101,11 @@ def test_append_to_directory_raises_vault_error(vault):
 def test_read_directory_raises_vault_error(vault):
     with pytest.raises(VaultError, match="directory"):
         vault.read("Claude/Sessions")
+
+
+def test_write_is_atomic_no_tmp_left_behind(vault):
+    vault.write("Claude/Inbox/atomic.md", "v1")
+    vault.write("Claude/Inbox/atomic.md", "v2", overwrite=True)
+    assert vault.read("Claude/Inbox/atomic.md") == "v2"
+    leftovers = list(vault.root.rglob("*.tmp-write"))
+    assert leftovers == []

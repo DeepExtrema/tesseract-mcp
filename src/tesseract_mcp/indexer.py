@@ -108,7 +108,16 @@ def main() -> None:
     parser.add_argument("--backend", default=None, help="codex | claude")
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--rebuild-only",
+        action="store_true",
+        help="Rebuild the query cache from Claude/Graph markdown without any LLM extraction",
+    )
     args = parser.parse_args()
+    if args.rebuild_only:
+        cache.rebuild(Vault(args.vault), db_path())
+        print(json.dumps({"rebuilt": True, "db": str(db_path())}))
+        return
     counts = run(
         Vault(args.vault),
         CliExtractor(backend=args.backend),
