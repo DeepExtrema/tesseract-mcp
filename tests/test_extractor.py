@@ -113,3 +113,69 @@ def test_backend_from_env(monkeypatch):
 
 def test_vocabularies():
     assert "organization" in ENTITY_TYPES and "related_to" in RELATIONS
+
+
+def test_extract_passes_prompt_via_stdin_not_argv():
+    captured = {}
+
+    def runner(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["input"] = kwargs.get("input")
+        return FakeProc(stdout=json.dumps(GOOD))
+
+    CliExtractor(backend="codex", runner=runner).extract("N.md", "SECRET-CONTENT-XYZ")
+    assert "SECRET-CONTENT-XYZ" in (captured["input"] or "")
+    assert not any("SECRET-CONTENT-XYZ" in str(part) for part in captured["cmd"])
+
+
+def test_large_content_does_not_crash():
+    # 100KB content would exceed the Windows argv limit if passed as an arg
+    big = "x" * 100_000
+
+    def runner(cmd, **kwargs):
+        assert kwargs.get("input") and len(kwargs["input"]) > 100_000
+        return FakeProc(stdout=json.dumps(GOOD))
+
+    ex = CliExtractor(backend="codex", runner=runner).extract("N.md", big)
+    assert ex.entities
+
+
+def test_timeout_wrapped_as_extractor_error():
+    import subprocess as sp
+
+    def runner(cmd, **kwargs):
+        raise sp.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    with pytest.raises(ExtractorError, match="timed out"):
+        CliExtractor(backend="codex", runner=runner).extract("N.md", "c")
+
+
+def test_missing_binary_wrapped_as_extractor_error():
+    def runner(cmd, **kwargs):
+        raise FileNotFoundError("codex not found")
+
+    with pytest.raises(ExtractorError, match="failed to run"):
+        CliExtractor(backend="codex", runner=runner).extract("N.md", "c")
+
+
+def test_parse_handles_two_json_objects():
+    out = '{"example": 1}\n' + json.dumps(GOOD)
+
+    def runner(cmd, **kwargs):
+        return FakeProc(stdout=out)
+
+    # first decodable object wins; ensure no crash and we get a dict-shaped Extraction
+    ex = CliExtractor(backend="codex", runner=runner).extract("N.md", "c")
+    # GOOD is the second object; first is {"example":1} which coerces to empty Extraction.
+    # Either way it must not raise. Assert it returned an Extraction.
+    assert hasattr(ex, "entities")
+
+
+def test_parse_prefers_fenced_json_block():
+    out = "Here is context with a brace { not json.\n```json\n" + json.dumps(GOOD) + "\n```\ntrailing {oops"
+
+    def runner(cmd, **kwargs):
+        return FakeProc(stdout=out)
+
+    ex = CliExtractor(backend="codex", runner=runner).extract("N.md", "c")
+    assert len(ex.entities) == 2

@@ -89,10 +89,20 @@ class CliExtractor:
         self._run = runner
 
     def _invoke(self, prompt: str) -> str:
-        cmd = self.COMMANDS[self.backend] + [prompt]
-        proc = self._run(
-            cmd, capture_output=True, text=True, timeout=self.timeout, encoding="utf-8"
-        )
+        cmd = self.COMMANDS[self.backend]
+        try:
+            proc = self._run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                encoding="utf-8",
+            )
+        except subprocess.TimeoutExpired as e:
+            raise ExtractorError(f"{self.backend} timed out after {self.timeout}s") from e
+        except OSError as e:
+            raise ExtractorError(f"failed to run {self.backend}: {e}") from e
         if proc.returncode != 0:
             raise ExtractorError(
                 f"{self.backend} exited {proc.returncode}: {(proc.stderr or '')[:300]}"
@@ -101,10 +111,24 @@ class CliExtractor:
 
     @staticmethod
     def _parse(output: str) -> dict:
-        start, end = output.find("{"), output.rfind("}")
-        if start == -1 or end <= start:
-            raise ExtractorError("no JSON object in extractor output")
-        return json.loads(output[start : end + 1])
+        import re
+
+        fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, re.DOTALL)
+        if fence:
+            return json.loads(fence.group(1))
+
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(output):
+            if ch != "{":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(output[i:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                return obj
+
+        raise ExtractorError("no JSON object in extractor output")
 
     def extract(self, path: str, content: str) -> Extraction:
         prompt = PROMPT_TEMPLATE.format(path=path, content=content)
