@@ -35,7 +35,7 @@ def test_find_entity_by_name_and_alias(populated):
     assert cache.find_entity(populated, "ACME")  # alias
     assert got[0]["mention_count"] == 2
     assert {"rel": "operates_in", "to": "Supply Chain"} in [
-        {"rel": e["rel"], "to": e["dst"]} for e in got[0]["relations"]
+        {"rel": e["rel"], "to": e["to"]} for e in got[0]["relations"]
     ]
 
 
@@ -70,3 +70,31 @@ def test_rebuild_atomic_replaces(populated, vault, tmp_path):
     db = populated
     cache.rebuild(vault, db)  # second rebuild over existing db must not error
     assert cache.find_entity(db, "acme")
+
+
+def test_same_name_different_type_not_conflated(vault, tmp_path):
+    from tesseract_mcp.graphstore import GraphStore
+
+    store = GraphStore(vault)
+    store.apply("A.md", Extraction(
+        [{"name": "Ops", "type": "domain", "aliases": [], "summary": "domain ops"}],
+        [{"from": "Globex", "from_type": "organization", "rel": "operates_in",
+          "to": "Ops", "to_type": "domain", "evidence": ""}],
+    ))
+    store.apply("B.md", Extraction(
+        [{"name": "Ops", "type": "topic", "aliases": [], "summary": "topic ops"}], []
+    ))
+    db = tmp_path / "g.db"
+    cache.rebuild(vault, db)
+    dom = cache.find_entity(db, "Ops", type="domain")
+    top = cache.find_entity(db, "Ops", type="topic")
+    assert dom and top
+    assert dom[0]["mention_count"] == 1   # only A.md, not conflated with topic
+    assert top[0]["mention_count"] == 1   # only B.md
+    # the domain has an inbound operates_in edge; the topic has none
+    assert top[0]["relations"] == []
+
+
+def test_related_notes_excludes_self_without_md_suffix(populated, vault):
+    got = cache.related_notes(populated, vault, "Claude/Inbox/interview", hops=1)  # no .md
+    assert "Claude/Inbox/interview.md" not in [r["path"] for r in got]

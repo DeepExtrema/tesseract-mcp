@@ -128,9 +128,11 @@ class GraphStore:
         return self._insert_line(entity_rel, MENTIONS_HEADER, line, marker)
 
     def add_relation(self, src_rel: str, relation: str, dst_rel: str) -> bool:
+        dst_target = dst_rel[:-3] if dst_rel.endswith(".md") else dst_rel
         dst_stem = Path(dst_rel).stem
-        line = f"- {relation} [[{dst_stem}]]"
-        return self._insert_line(src_rel, RELATIONS_HEADER, line, line)
+        marker = f"- {relation} [[{dst_target}|"
+        line = f"- {relation} [[{dst_target}|{dst_stem}]]"
+        return self._insert_line(src_rel, RELATIONS_HEADER, line, marker)
 
     def apply(self, note_path: str, extraction: Extraction) -> dict:
         counts = {"entities_created": 0, "entities_merged": 0,

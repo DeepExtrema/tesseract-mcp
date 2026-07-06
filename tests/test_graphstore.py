@@ -93,7 +93,7 @@ def test_add_relation_idempotent(vault):
     b = store.upsert_entity(CHAIN)
     assert store.add_relation(a, "operates_in", b) is True
     assert store.add_relation(a, "operates_in", b) is False
-    assert "- operates_in [[Supply Chain]]" in vault.read(a)
+    assert "- operates_in [[Claude/Graph/Domains/Supply Chain|Supply Chain]]" in vault.read(a)
 
 
 def test_apply_full_extraction(vault):
@@ -103,7 +103,7 @@ def test_apply_full_extraction(vault):
                       "mentions_added": 2, "relations_added": 1}
     acme = vault.read(entity_rel_path("organization", "Acme Corp"))
     assert "[[Projects/Sentinel ESG|Sentinel ESG]]" in acme
-    assert "- operates_in [[Supply Chain]]" in acme
+    assert "- operates_in [[Claude/Graph/Domains/Supply Chain|Supply Chain]]" in acme
 
 
 def test_apply_twice_is_idempotent(vault):

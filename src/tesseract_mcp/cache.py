@@ -15,12 +15,14 @@ from .vault import Vault
 # Mentions are path-qualified: - [[Projects/Sentinel ESG|Sentinel ESG]] — evidence
 # group 1 = full vault-relative path (no .md); group 2 = evidence (optional)
 _MENTION = re.compile(r"^- \[\[([^\]|]+)\|[^\]]+\]\](?:\s+[—-]\s+(.*))?$")
-_RELATION = re.compile(r"^- (\w+) \[\[([^\]|]+)\]\]$")
+# Relations are path-qualified the same way: - operates_in [[Claude/Graph/.../X|X]]
+# group 1 = relation name; group 2 = full vault-relative path of target (no .md)
+_RELATION = re.compile(r"^- (\w+) \[\[([^\]|]+)\|[^\]]+\]\]$")
 
 SCHEMA = """
-CREATE TABLE entities (name TEXT, type TEXT, path TEXT, summary TEXT, aliases TEXT);
-CREATE TABLE edges (src TEXT, rel TEXT, dst TEXT);
-CREATE TABLE mentions (entity TEXT, note_path TEXT, evidence TEXT);
+CREATE TABLE entities (path TEXT, name TEXT, type TEXT, summary TEXT, aliases TEXT);
+CREATE TABLE edges (src_path TEXT, rel TEXT, dst_path TEXT);
+CREATE TABLE mentions (entity_path TEXT, note_path TEXT, evidence TEXT);
 """
 
 
@@ -60,23 +62,24 @@ def rebuild(vault: Vault, db_path: Path) -> None:
                     summary = line.strip()
                     break
             rel_path = "/".join(p.relative_to(vault.root).parts)
+            entity_path = rel_path[:-3] if rel_path.endswith(".md") else rel_path
             con.execute(
                 "INSERT INTO entities VALUES (?,?,?,?,?)",
-                (name, etype, rel_path, summary, json.dumps([str(a) for a in aliases])),
+                (entity_path, name, etype, summary, json.dumps([str(a) for a in aliases])),
             )
             for line in _section(text, MENTIONS_HEADER).splitlines():
                 mm = _MENTION.match(line.strip())
                 if mm:
                     con.execute(
                         "INSERT INTO mentions VALUES (?,?,?)",
-                        (name, mm.group(1).strip(), mm.group(2) or ""),
+                        (entity_path, mm.group(1).strip(), mm.group(2) or ""),
                     )
             for line in _section(text, RELATIONS_HEADER).splitlines():
                 rm = _RELATION.match(line.strip())
                 if rm:
                     con.execute(
                         "INSERT INTO edges VALUES (?,?,?)",
-                        (name, rm.group(1), rm.group(2).strip()),
+                        (entity_path, rm.group(1), rm.group(2).strip()),
                     )
     con.commit()
     con.close()
@@ -89,9 +92,14 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+def _path_name_map(con: sqlite3.Connection) -> dict[str, str]:
+    return {r["path"]: r["name"] for r in con.execute("SELECT path, name FROM entities")}
+
+
 def find_entity(db_path: Path, query: str, type: str | None = None) -> list[dict]:
     con = _connect(db_path)
     q = query.casefold()
+    names_by_path = _path_name_map(con)
     results = []
     for row in con.execute("SELECT * FROM entities"):
         names = [row["name"]] + json.loads(row["aliases"])
@@ -100,16 +108,16 @@ def find_entity(db_path: Path, query: str, type: str | None = None) -> list[dict
         if type and row["type"] != type:
             continue
         relations = [
-            dict(e)
+            {"rel": e["rel"], "to": names_by_path.get(e["dst_path"], Path(e["dst_path"]).stem)}
             for e in con.execute(
-                "SELECT rel, dst FROM edges WHERE src = ?", (row["name"],)
+                "SELECT rel, dst_path FROM edges WHERE src_path = ?", (row["path"],)
             )
         ]
         count = con.execute(
-            "SELECT COUNT(*) FROM mentions WHERE entity = ?", (row["name"],)
+            "SELECT COUNT(*) FROM mentions WHERE entity_path = ?", (row["path"],)
         ).fetchone()[0]
         results.append(
-            {"name": row["name"], "type": row["type"], "path": row["path"],
+            {"name": row["name"], "type": row["type"], "path": row["path"] + ".md",
              "summary": row["summary"], "aliases": json.loads(row["aliases"]),
              "relations": relations, "mention_count": count}
         )
@@ -119,35 +127,44 @@ def find_entity(db_path: Path, query: str, type: str | None = None) -> list[dict
 
 def related_notes(db_path: Path, vault: Vault, path: str, hops: int = 2) -> list[dict]:
     con = _connect(db_path)
-    # mentions store note_path without the .md suffix (path-qualified link target)
+    # normalize once: entity_path/mentions.note_path are stored without .md
     lookup = path[:-3] if path.endswith(".md") else path
+    names_by_path = _path_name_map(con)
     seed = [
-        r["entity"]
-        for r in con.execute("SELECT entity FROM mentions WHERE note_path = ?", (lookup,))
+        r["entity_path"]
+        for r in con.execute(
+            "SELECT entity_path FROM mentions WHERE note_path = ?", (lookup,)
+        )
     ]
-    reached: dict[str, str] = {e: e for e in seed}  # entity -> chain
+    reached: dict[str, str] = {
+        e: names_by_path.get(e, Path(e).stem) for e in seed
+    }  # entity_path -> chain (rendered with names)
     frontier = list(seed)
     for _ in range(max(0, hops - 1)):
         nxt = []
         for ent in frontier:
             for row in con.execute(
-                "SELECT rel, dst FROM edges WHERE src = ? UNION SELECT rel, src FROM edges WHERE dst = ?",
+                "SELECT rel, dst_path FROM edges WHERE src_path = ? "
+                "UNION SELECT rel, src_path FROM edges WHERE dst_path = ?",
                 (ent, ent),
             ):
                 other = row[1]
                 if other not in reached:
-                    reached[other] = f"{reached[ent]} ({row[0]}) {other}"
+                    other_name = names_by_path.get(other, Path(other).stem)
+                    reached[other] = f"{reached[ent]} ({row[0]}) {other_name}"
                     nxt.append(other)
         frontier = nxt
     results = []
     seen = set()
     for ent, chain in reached.items():
         for row in con.execute(
-            "SELECT note_path FROM mentions WHERE entity = ?", (ent,)
+            "SELECT note_path FROM mentions WHERE entity_path = ?", (ent,)
         ):
             note = row["note_path"]
-            note_full = note if note.endswith(".md") else note + ".md"
-            if note_full == path or note_full in seen or note_full.startswith("Claude/Graph/"):
+            if note == lookup or note.startswith("Claude/Graph/"):
+                continue
+            note_full = note + ".md"
+            if note_full in seen:
                 continue
             seen.add(note_full)
             results.append({"path": note_full, "via": chain})
