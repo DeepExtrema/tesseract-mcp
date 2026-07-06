@@ -21,9 +21,19 @@ Reply with ONLY a JSON object, no prose, matching:
 {{"entities": [{{"name": str, "type": str, "aliases": [str], "summary": str}}],
   "relations": [{{"from": str, "from_type": str, "rel": str, "to": str, "to_type": str, "evidence": str}}]}}
 
-Rules: extract only significant entities (skip generic words); summaries are one
-sentence; evidence is a short quote or paraphrase from the note; relations must
-connect extracted entities.
+Rules:
+- Extract only significant real-world entities (skip generic words).
+- NEVER extract file paths, file names, note titles, or URLs as entities
+  (e.g. "README.md", "Claude/Index.md", "DEPLOY.md" are NOT entities).
+- Use the most canonical name for each entity and fold variants into aliases
+  rather than creating separate entities (e.g. "Oracle VM" and "Oracle VM
+  deploy" are ONE entity; put the variant in aliases).
+- Choose the type carefully: organization (companies, services, tools like
+  CouchDB/Caddy), person (named people), domain (fields/industries), project
+  (named initiatives), topic (concepts/themes), source (a cited document,
+  paper, interview, or dataset — NOT a filename).
+- Summaries are one sentence; evidence is a short quote or paraphrase; every
+  relation must connect two entities you extracted.
 
 Note path: {path}
 Note content:

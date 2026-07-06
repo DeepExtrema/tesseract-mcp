@@ -4,12 +4,19 @@ import pytest
 
 from tesseract_mcp.extractor import (
     ENTITY_TYPES,
+    PROMPT_TEMPLATE,
     RELATIONS,
     CliExtractor,
     Extraction,
     ExtractorError,
     _coerce,
 )
+
+
+def test_prompt_forbids_filename_entities_and_urges_canonical_names():
+    low = PROMPT_TEMPLATE.lower()
+    assert "file path" in low or "file name" in low or "filename" in low
+    assert "canonical" in low and "alias" in low
 
 GOOD = {
     "entities": [
