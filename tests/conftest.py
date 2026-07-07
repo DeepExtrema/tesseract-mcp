@@ -3,6 +3,19 @@ import pytest
 from tesseract_mcp.vault import Vault
 
 
+@pytest.fixture(autouse=True)
+def _isolated_machine_state(tmp_path_factory, monkeypatch):
+    """No test may ever touch the real ~/.tesseract-mcp (manifest + graph.db).
+
+    test_consolidate.py once lacked per-file isolation and silently clobbered
+    the live graph cache with fixture data; this global guard makes that
+    class of bug impossible.
+    """
+    monkeypatch.setenv(
+        "TESSERACT_STATE_DIR", str(tmp_path_factory.mktemp("tesseract-state"))
+    )
+
+
 @pytest.fixture
 def vault_dir(tmp_path):
     """A miniature Obsidian vault with human notes and a Claude/ subtree."""
