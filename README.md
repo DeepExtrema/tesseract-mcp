@@ -19,6 +19,7 @@ replicates changes to all machines via CouchDB.
 
 | Tool | Purpose |
 |---|---|
+| `onboard` | Call first in a new session — constitution, routing, cheat-sheet, graph status |
 | `search_brain` | Full-text search, optional tag/folder filters |
 | `read_note` | Read any note |
 | `log_session` | Session log into `Claude/Sessions/` + index update |
@@ -42,6 +43,7 @@ Agents write proactively **only inside `Claude/`**. Everything else is
 read-only unless the user explicitly asks. The quarantine is enforced in
 code (`vault.py`), and the human-readable rules live in the vault at
 `Claude/README.md`.
+Connecting clients receive orientation via MCP `instructions`; call `onboard` for the full guide.
 
 ## The semantic graph
 

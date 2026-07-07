@@ -27,7 +27,7 @@ def test_all_tools_registered():
         "upsert_concept", "write_note", "add_task", "list_tasks",
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
-        "consolidate_graph",
+        "consolidate_graph", "onboard",
     }
 
 
@@ -154,3 +154,30 @@ def test_consolidate_graph_dry_run(monkeypatch):
     monkeypatch.setattr(server, "_make_extractor", lambda: FakeBackend())
     result = server.consolidate_graph()
     assert result["applied"] is False and result["proposed"] == []
+
+
+def test_server_instructions_orient_clients():
+    text = server.mcp.instructions or ""
+    assert "Claude/" in text
+    assert "search_brain" in text
+    assert "quarantine" in text.lower() or "outside Claude/" in text
+
+
+def test_onboard_returns_orientation(vault_dir):
+    (vault_dir / "Claude" / "README.md").write_text(
+        "# The Claude/ Constitution\n\nRules here.\n", encoding="utf-8"
+    )
+    (vault_dir / "CLAUDE.md").write_text(
+        "# Vault Guide\n\nRouting rules.\n", encoding="utf-8"
+    )
+    got = server.onboard()
+    assert "Constitution" in got["constitution"]
+    assert "Routing rules" in got["vault_guide"]
+    assert any("search_brain" in t for t in got["tools"])
+    assert got["graph"] == "not built yet — call index_brain"
+
+
+def test_onboard_tolerates_missing_guides():
+    got = server.onboard()  # fixture vault has neither guide file
+    assert "not installed" in got["constitution"]
+    assert "not installed" in got["vault_guide"]

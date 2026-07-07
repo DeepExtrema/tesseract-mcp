@@ -10,7 +10,24 @@ from . import cache as cache_mod, consolidate as consolidate_mod, graph, indexer
 from .extractor import CliExtractor
 from .vault import Vault, VaultError
 
-mcp = FastMCP("tesseract")
+INSTRUCTIONS = """Tesseract mind database: a shared Obsidian vault (markdown,
+LiveSync-synced) used as persistent memory by Taimoor and his AI agents.
+
+Orientation: call the `onboard` tool first in a new session. Read rules in
+Claude/README.md (the constitution) before writing.
+
+Layout: agent-owned notes live under Claude/ — Sessions/ (work logs),
+Concepts/ (evergreen topics), Inbox/ (quick captures), Tasks.md (checkboxes),
+Decisions.md (append-only log), Graph/ (semantic entity graph). Everything
+outside Claude/ belongs to the human: read freely, write only when explicitly
+asked (writes there are quarantined in code — confirm_outside_claude).
+
+Workflow: search_brain / query_notes / related_notes / find_entity BEFORE
+assuming something is unknown; log_session at the end of significant work;
+capture for stray thoughts; add_task for follow-ups; upsert_concept to grow
+evergreen knowledge (search first, extend rather than duplicate)."""
+
+mcp = FastMCP("tesseract", instructions=INSTRUCTIONS)
 
 _vault: Vault | None = None
 
@@ -129,6 +146,46 @@ def list_recent(n: int = 10) -> list[dict]:
     """Most recently modified notes, newest first — use to catch up on what
     changed in the vault."""
     return graph.list_recent(get_vault(), n=n)
+
+
+@mcp.tool()
+def onboard() -> dict:
+    """Call this FIRST in a new session: returns the vault constitution,
+    routing guide, tool cheat-sheet, and graph status."""
+    vault = get_vault()
+    try:
+        constitution = vault.read("Claude/README.md")
+    except VaultError:
+        constitution = "(constitution not installed — run install_conventions)"
+    try:
+        vault_guide = vault.read("CLAUDE.md")
+    except VaultError:
+        vault_guide = "(vault guide not installed — run install_conventions)"
+    tools = [
+        "search_brain(query, tags?, folder?, limit?) — full-text search",
+        "query_notes(project?, tags?, folder?) — frontmatter/Dataview query",
+        "read_note(path) / write_note(path, content) — write_note is quarantined to Claude/",
+        "log_session(title, content, project, tags) — end-of-work log + index",
+        "capture(content) — quick thought to Claude/Inbox",
+        "upsert_concept(name, content) — evergreen notes; search_brain first",
+        "add_task(content, due?) / list_tasks(include_done?, folder?)",
+        "get_backlinks(path) / list_recent(n)",
+        "index_brain(force?) — extract entities into the semantic graph",
+        "find_entity(query, type?) / related_notes(path, hops?) / graph_stats()",
+        "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
+    ]
+    db = indexer.db_path()
+    if db.exists():
+        graph_status = cache_mod.stats(db)
+    else:
+        graph_status = "not built yet — call index_brain"
+    return {
+        "instructions": INSTRUCTIONS,
+        "constitution": constitution,
+        "vault_guide": vault_guide,
+        "tools": tools,
+        "graph": graph_status,
+    }
 
 
 def _make_extractor():
