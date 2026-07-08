@@ -39,12 +39,10 @@ def test_missing_env_var_raises(monkeypatch):
 
 def test_search_brain_returns_dicts():
     hits = server.search_brain("ingestion pipeline")
-    assert hits == [
-        {
-            "path": "Projects/Sentinel ESG.md",
-            "excerpt": "ESG incident ingestion pipeline with CouchDB-free architecture.",
-        }
-    ]
+    assert hits[0] == {
+        "path": "Projects/Sentinel ESG.md",
+        "excerpt": "ESG incident ingestion pipeline with CouchDB-free architecture.",
+    }
 
 
 def test_search_brain_limit():

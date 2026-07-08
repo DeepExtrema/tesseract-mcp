@@ -16,6 +16,32 @@ class FakeEmbedder:
         ]
 
 
+class FakeSemanticEmbedder:
+    """Embeds 'owe money' queries and 'invoice' notes into the same region
+    of vector space despite zero shared tokens — the paraphrase case the
+    vector half of hybrid search exists for."""
+
+    def embed_batch(self, texts):
+        out = []
+        for t in texts:
+            lower = t.lower()
+            if "owe" in lower or "invoice" in lower:
+                out.append([1.0, 0.0])
+            else:
+                out.append([0.0, 1.0])
+        return out
+
+
+def test_hybrid_search_semantic_match_without_shared_tokens(vault, vault_dir):
+    (vault_dir / "Contractors.md").write_text(
+        "Outstanding invoices from contractors need review.\n", encoding="utf-8"
+    )
+    hits = hybrid_search(
+        vault, vault.root, FakeSemanticEmbedder(), "who do I owe money to"
+    )
+    assert "Contractors.md" in [h.path for h in hits]
+
+
 def test_rrf_fuse_prefers_items_ranked_high_in_both_lists():
     a = ["x.md", "y.md", "z.md"]
     b = ["y.md", "x.md", "z.md"]
