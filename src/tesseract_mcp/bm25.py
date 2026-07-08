@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 
+# BM25L (not BM25Okapi): Okapi's Robertson IDF yields zero scores on the
+# small corpora typical of per-query vault scans and the plan's test fixtures.
 from rank_bm25 import BM25L
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
