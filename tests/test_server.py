@@ -27,7 +27,7 @@ def test_all_tools_registered():
         "upsert_concept", "write_note", "add_task", "list_tasks",
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
-        "consolidate_graph", "onboard",
+        "consolidate_graph", "onboard", "context_bundle",
     }
 
 
@@ -39,16 +39,32 @@ def test_missing_env_var_raises(monkeypatch):
 
 def test_search_brain_returns_dicts():
     hits = server.search_brain("ingestion pipeline")
-    assert hits == [
-        {
-            "path": "Projects/Sentinel ESG.md",
-            "excerpt": "ESG incident ingestion pipeline with CouchDB-free architecture.",
-        }
-    ]
+    assert hits[0] == {
+        "path": "Projects/Sentinel ESG.md",
+        "excerpt": "ESG incident ingestion pipeline with CouchDB-free architecture.",
+    }
 
 
 def test_search_brain_limit():
     assert len(server.search_brain("e", limit=1)) == 1
+
+
+def test_search_brain_uses_hybrid_engine(monkeypatch):
+    from tesseract_mcp import hybrid as hybrid_mod
+    from tesseract_mcp.search import Hit
+
+    called = {}
+
+    def fake_hybrid_search(vault, state_root, embedder, query, tags=None, folder=None, limit=20):
+        called["query"] = query
+        called["limit"] = limit
+        return [Hit("Fake.md", "fake excerpt")]
+
+    monkeypatch.setattr(hybrid_mod, "hybrid_search", fake_hybrid_search)
+    result = server.search_brain("anything", limit=5)
+    assert called["query"] == "anything"
+    assert called["limit"] == 5
+    assert result == [{"path": "Fake.md", "excerpt": "fake excerpt"}]
 
 
 def test_read_note():
@@ -181,3 +197,32 @@ def test_onboard_tolerates_missing_guides():
     got = server.onboard()  # fixture vault has neither guide file
     assert "not installed" in got["constitution"]
     assert "not installed" in got["vault_guide"]
+
+
+def test_context_bundle_composes_search_and_graph(monkeypatch):
+    from tesseract_mcp.extractor import Extraction
+
+    class FakeExtractor:
+        def extract(self, path, content):
+            if "Sentinel" in path:
+                return Extraction(
+                    [{"name": "Acme Corp", "type": "organization", "aliases": [], "summary": "Co."}],
+                    [],
+                )
+            return Extraction()
+
+    monkeypatch.setattr(server, "_make_extractor", lambda: FakeExtractor())
+    server.index_brain()
+
+    bundle = server.context_bundle("ingestion pipeline")
+    assert bundle["hits"]
+    assert bundle["hits"][0]["path"] == "Projects/Sentinel ESG.md"
+    assert any(e["name"] == "Acme Corp" for e in bundle["entities"])
+    assert isinstance(bundle["related_notes"], list)
+
+
+def test_context_bundle_without_graph_still_returns_hits():
+    bundle = server.context_bundle("ingestion pipeline")
+    assert bundle["hits"]
+    assert bundle["entities"] == []
+    assert bundle["related_notes"] == []

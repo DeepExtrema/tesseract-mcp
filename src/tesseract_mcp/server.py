@@ -6,7 +6,8 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, indexer, notes, search as search_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, tasks as tasks_mod
+from .embeddings import SentenceTransformerEmbedder
 from .extractor import CliExtractor
 from .vault import Vault, VaultError
 
@@ -30,6 +31,7 @@ evergreen knowledge (search first, extend rather than duplicate)."""
 mcp = FastMCP("tesseract", instructions=INSTRUCTIONS)
 
 _vault: Vault | None = None
+_embedder = None
 
 
 def get_vault() -> Vault:
@@ -44,6 +46,13 @@ def get_vault() -> Vault:
     return _vault
 
 
+def _get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformerEmbedder()
+    return _embedder
+
+
 @mcp.tool()
 def search_brain(
     query: str,
@@ -51,10 +60,51 @@ def search_brain(
     folder: str | None = None,
     limit: int = 20,
 ) -> list[dict]:
-    """Full-text search across the whole vault. Optionally filter by
-    frontmatter tags or restrict to a subfolder. Returns path + excerpt."""
-    hits = search_mod.search(get_vault(), query, tags=tags, folder=folder, limit=limit)
+    """Hybrid full-text + semantic search across the whole vault (BM25 +
+    vector similarity, fused). Optionally filter by frontmatter tags or
+    restrict to a subfolder. Returns path + excerpt, ranked by relevance."""
+    vault = get_vault()
+    hits = hybrid.hybrid_search(
+        vault, indexer.state_dir(vault.root), _get_embedder(),
+        query, tags=tags, folder=folder, limit=limit,
+    )
     return [{"path": h.path, "excerpt": h.excerpt} for h in hits]
+
+
+@mcp.tool()
+def context_bundle(query: str, hops: int = 2, limit: int = 10) -> dict:
+    """One-call GraphRAG context: hybrid-search hits for the query, the
+    graph entities those hits mention, and notes connected to those entities
+    within N hops — instead of chaining search_brain, find_entity, and
+    related_notes across separate calls."""
+    vault = get_vault()
+    hits = hybrid.hybrid_search(
+        vault, indexer.state_dir(vault.root), _get_embedder(), query, limit=limit,
+    )
+    result_hits = [{"path": h.path, "excerpt": h.excerpt} for h in hits]
+
+    db = indexer.db_path(vault.root)
+    if not db.exists():
+        return {"hits": result_hits, "entities": [], "related_notes": []}
+
+    entity_paths: set[str] = set()
+    related: list[dict] = []
+    seen_related: set[str] = set()
+    for h in hits:
+        for entity_path in cache_mod.note_entity_paths(db, h.path):
+            entity_paths.add(entity_path)
+        for r in cache_mod.related_notes(db, vault, h.path, hops=hops):
+            if r["path"] not in seen_related:
+                seen_related.add(r["path"])
+                related.append(r)
+
+    entities = []
+    for entity_path in sorted(entity_paths):
+        name = entity_path.rsplit("/", 1)[-1]
+        found = cache_mod.find_entity(db, name)
+        entities.extend(f for f in found if f["path"][:-3] == entity_path)
+
+    return {"hits": result_hits, "entities": entities, "related_notes": related}
 
 
 @mcp.tool()
@@ -172,9 +222,10 @@ def onboard() -> dict:
         "get_backlinks(path) / list_recent(n)",
         "index_brain(force?) — extract entities into the semantic graph",
         "find_entity(query, type?) / related_notes(path, hops?) / graph_stats()",
+        "context_bundle(query, hops?, limit?) — one call: hybrid hits + entities + related notes",
         "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
     ]
-    db = indexer.db_path()
+    db = indexer.db_path(get_vault().root)
     if db.exists():
         graph_status = cache_mod.stats(db)
     else:
@@ -193,7 +244,7 @@ def _make_extractor():
 
 
 def _graph_db():
-    db = indexer.db_path()
+    db = indexer.db_path(get_vault().root)
     if not db.exists():
         raise VaultError("Graph cache not built yet — run index_brain first.")
     return db

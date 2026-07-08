@@ -38,16 +38,12 @@ def _frontmatter_tags(text: str) -> list[str]:
     return [str(t) for t in tags]
 
 
-def search(
-    vault: Vault,
-    query: str,
-    tags: list[str] | None = None,
-    folder: str | None = None,
-    limit: int = 20,
-) -> list[Hit]:
+def iter_candidate_notes(
+    vault: Vault, tags: list[str] | None = None, folder: str | None = None
+) -> list[tuple[str, str]]:
+    """(rel_path, text) for every note passing the tag/folder filters."""
     base = vault.resolve(folder) if folder else vault.root
-    q = query.lower()
-    hits: list[Hit] = []
+    out: list[tuple[str, str]] = []
     for path in sorted(base.rglob("*.md")):
         rel_parts = path.relative_to(vault.root).parts
         if SKIP_DIRS & set(rel_parts):
@@ -57,8 +53,22 @@ def search(
             t.casefold() for t in _frontmatter_tags(text)
         }:
             continue
-        rel = "/".join(rel_parts)
-        if q in path.stem.lower():
+        out.append(("/".join(rel_parts), text))
+    return out
+
+
+def search(
+    vault: Vault,
+    query: str,
+    tags: list[str] | None = None,
+    folder: str | None = None,
+    limit: int = 20,
+) -> list[Hit]:
+    q = query.lower()
+    hits: list[Hit] = []
+    for rel, text in iter_candidate_notes(vault, tags, folder):
+        stem = rel.rsplit("/", 1)[-1][:-3]
+        if q in stem.lower():
             hits.append(Hit(rel, "(title match)"))
         else:
             for line in text.splitlines():

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from . import cache
+from . import embeddings as embeddings_mod
 from .extractor import CliExtractor, ExtractorError
 from .graphstore import GRAPH_ROOT, GraphStore
 from .search import SKIP_DIRS
@@ -19,23 +20,33 @@ DEFAULT_BATCH = 25
 MAX_ATTEMPTS = 3
 
 
-def state_dir() -> Path:
+def state_dir(vault_root: str | Path | None = None) -> Path:
     override = os.environ.get("TESSERACT_STATE_DIR")
-    d = Path(override) if override else Path.home() / ".tesseract-mcp"
+    if override:
+        d = Path(override)
+    else:
+        root = vault_root or os.environ.get("TESSERACT_VAULT_PATH")
+        if not root:
+            raise VaultError(
+                "Cannot determine state directory: pass vault_root or set "
+                "TESSERACT_VAULT_PATH."
+            )
+        digest = hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()[:12]
+        d = Path.home() / ".tesseract-mcp" / digest
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _manifest_path() -> Path:
-    return state_dir() / "manifest.json"
+def _manifest_path(vault_root: str | Path | None = None) -> Path:
+    return state_dir(vault_root) / "manifest.json"
 
 
-def db_path() -> Path:
-    return state_dir() / "graph.db"
+def db_path(vault_root: str | Path | None = None) -> Path:
+    return state_dir(vault_root) / "graph.db"
 
 
-def load_manifest() -> dict:
-    p = _manifest_path()
+def load_manifest(vault_root: str | Path | None = None) -> dict:
+    p = _manifest_path(vault_root)
     if p.exists():
         manifest = json.loads(p.read_text(encoding="utf-8"))
     else:
@@ -46,8 +57,8 @@ def load_manifest() -> dict:
     return manifest
 
 
-def save_manifest(manifest: dict) -> None:
-    _manifest_path().write_text(
+def save_manifest(manifest: dict, vault_root: str | Path | None = None) -> None:
+    _manifest_path(vault_root).write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
 
@@ -73,8 +84,9 @@ def run(
     batch: int = DEFAULT_BATCH,
     force: bool = False,
     ignore: tuple[str, ...] = DEFAULT_IGNORE,
+    precompute_embeddings: bool = True,
 ) -> dict:
-    manifest = load_manifest()
+    manifest = load_manifest(vault.root)
     current = scan_notes(vault, ignore)
     skipped = 0
     if force:
@@ -112,14 +124,17 @@ def run(
         manifest["hashes"][rel] = current[rel]
         manifest["failures"].pop(rel, None)
         counts["processed"] += 1
-    save_manifest(manifest)
-    if counts["processed"] or not db_path().exists():
-        cache.rebuild(vault, db_path())
+    save_manifest(manifest, vault.root)
+    if counts["processed"] or not db_path(vault.root).exists():
+        cache.rebuild(vault, db_path(vault.root))
+    if precompute_embeddings:
+        embedder = embeddings_mod.SentenceTransformerEmbedder()
+        embeddings_mod.get_note_vectors(vault, state_dir(vault.root), embedder)
     return counts
 
 
 def _retract_stale_mentions(vault: Vault, store: GraphStore, rel: str) -> int:
-    db = db_path()
+    db = db_path(vault.root)
     if not db.exists():
         return 0
     removed = 0
@@ -146,8 +161,8 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.rebuild_only:
-        cache.rebuild(Vault(args.vault), db_path())
-        print(json.dumps({"rebuilt": True, "db": str(db_path())}))
+        cache.rebuild(Vault(args.vault), db_path(args.vault))
+        print(json.dumps({"rebuilt": True, "db": str(db_path(args.vault))}))
         return
     counts = run(
         Vault(args.vault),

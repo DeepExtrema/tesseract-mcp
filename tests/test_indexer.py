@@ -1,9 +1,11 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from tesseract_mcp import indexer
 from tesseract_mcp.extractor import Extraction, ExtractorError
+from tesseract_mcp.vault import VaultError
 
 ACME = {"name": "Acme Corp", "type": "organization", "aliases": [], "summary": "A company."}
 
@@ -145,6 +147,67 @@ def test_rebuild_skipped_when_nothing_processed(vault, monkeypatch):
     from tesseract_mcp import cache
     monkeypatch.setattr(cache, "rebuild", lambda v, p: calls.append(1))
     indexer.run(vault, FakeExtractor())        # no changes -> no rebuild
+    assert calls == []
+
+
+def test_state_dir_keyed_by_vault_root(tmp_path, monkeypatch):
+    monkeypatch.delenv("TESSERACT_STATE_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    vault_a = tmp_path / "vault-a"
+    vault_b = tmp_path / "vault-b"
+    vault_a.mkdir()
+    vault_b.mkdir()
+    dir_a = indexer.state_dir(vault_a)
+    dir_b = indexer.state_dir(vault_b)
+    assert dir_a != dir_b
+    assert dir_a.parent == dir_b.parent  # both live under ~/.tesseract-mcp
+    assert indexer.state_dir(vault_a) == dir_a  # stable for the same root
+
+
+def test_state_dir_falls_back_to_env_var(tmp_path, monkeypatch):
+    monkeypatch.delenv("TESSERACT_STATE_DIR", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    vault_root = tmp_path / "vault-c"
+    vault_root.mkdir()
+    monkeypatch.setenv("TESSERACT_VAULT_PATH", str(vault_root))
+    assert indexer.state_dir() == indexer.state_dir(vault_root)
+
+
+def test_state_dir_requires_vault_root_or_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("TESSERACT_STATE_DIR", raising=False)
+    monkeypatch.delenv("TESSERACT_VAULT_PATH", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    with pytest.raises(VaultError, match="TESSERACT_VAULT_PATH"):
+        indexer.state_dir()
+
+
+def test_run_precomputes_embeddings_by_default(vault, monkeypatch):
+    from tesseract_mcp import embeddings as embeddings_mod
+
+    calls = []
+
+    class FakeEmbedder:
+        def embed_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.0] for _ in texts]
+
+    monkeypatch.setattr(embeddings_mod, "SentenceTransformerEmbedder", FakeEmbedder)
+    indexer.run(vault, FakeExtractor())
+    assert calls  # embeddings were computed for the vault's notes
+
+
+def test_run_can_skip_embeddings(vault, monkeypatch):
+    from tesseract_mcp import embeddings as embeddings_mod
+
+    calls = []
+
+    class FakeEmbedder:
+        def embed_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.0] for _ in texts]
+
+    monkeypatch.setattr(embeddings_mod, "SentenceTransformerEmbedder", FakeEmbedder)
+    indexer.run(vault, FakeExtractor(), precompute_embeddings=False)
     assert calls == []
 
 
