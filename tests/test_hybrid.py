@@ -84,3 +84,27 @@ def test_hybrid_search_respects_limit(vault, vault_dir):
 def test_hybrid_search_no_match_returns_empty(vault):
     hits = hybrid_search(vault, vault.root, FakeEmbedder(), "zzzznomatch")
     assert hits == []
+
+
+def test_substring_signal_only_when_bm25_empty(vault, vault_dir):
+    # "aaa.md" contains the query only inside another word (substring match,
+    # not a token match); "zzz.md" contains it as a real token. When BM25 has
+    # results, the alphabetical substring signal must stay out of fusion, so
+    # aaa.md must not appear at all.
+    (vault_dir / "aaa.md").write_text(
+        "an important announcement was made\n", encoding="utf-8"
+    )
+    (vault_dir / "zzz.md").write_text(
+        "the port of hamburg is busy\n", encoding="utf-8"
+    )
+    hits = hybrid_search(vault, vault.root, FakeEmbedder(), "port")
+    paths = [h.path for h in hits]
+    assert "zzz.md" in paths       # real BM25 token match
+    assert "aaa.md" not in paths   # substring-only; signal gated off
+
+
+def test_substring_fallback_still_works_when_bm25_empty(vault):
+    # Single-character query: BM25's [a-z0-9]+ tokenizer yields no token
+    # matches, so the substring fallback must still return results.
+    hits = hybrid_search(vault, vault.root, FakeEmbedder(), "e", tags=["esg"])
+    assert [h.path for h in hits] == ["Projects/Sentinel ESG.md"]

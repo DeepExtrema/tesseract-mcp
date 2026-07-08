@@ -91,8 +91,12 @@ def hybrid_search(
     query_vec = embedder.embed_batch([query])[0]
     vector_ranked = _vector_rank(all_vectors, candidate_paths, query_vec, limit=50)
 
-    substring_ranked = _substring_rank(corpus, query, limit=50)
-    # Third RRF signal: BM25 tokenizes [a-z0-9]+ only, so single-char queries
-    # like "e" (test_hybrid_search_respects_tag_filter) need substring fallback.
-    fused = rrf_fuse([bm25_ranked, vector_ranked, substring_ranked])[:limit]
+    ranked_lists = [bm25_ranked, vector_ranked]
+    if not bm25_ranked:
+        # Fallback signal only: BM25 tokenizes [a-z0-9]+, so queries it cannot
+        # token-match (e.g. single characters, punctuation-only) fall through
+        # to substring matching. When BM25 has results, the alphabetically-
+        # ordered substring list would just pollute the fusion.
+        ranked_lists.append(_substring_rank(corpus, query, limit=50))
+    fused = rrf_fuse(ranked_lists)[:limit]
     return [Hit(rel, _excerpt(corpus[rel], rel, query)) for rel in fused]
