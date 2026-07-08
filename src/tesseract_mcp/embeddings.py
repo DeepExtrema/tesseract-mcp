@@ -31,7 +31,7 @@ class SentenceTransformerEmbedder:
         self._model = SentenceTransformer(model_key)
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return self._model.encode(texts, convert_to_numpy=False).tolist()
+        return self._model.encode(texts).tolist()
 
 
 def _scan_note_texts(vault: Vault) -> dict[str, str]:

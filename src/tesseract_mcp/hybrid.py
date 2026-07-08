@@ -70,6 +70,14 @@ def _substring_rank(corpus: dict[str, str], query: str, limit: int) -> list[str]
     return ranked
 
 
+def _query_tokens_match(text: str, query: str) -> bool:
+    tokens = bm25_mod.tokenize(query)
+    if len(tokens) <= 1:
+        return True
+    lower = text.lower()
+    return all(tok in lower for tok in tokens)
+
+
 def hybrid_search(
     vault: Vault,
     state_root: str | Path,
@@ -92,5 +100,8 @@ def hybrid_search(
     vector_ranked = _vector_rank(all_vectors, candidate_paths, query_vec, limit=50)
 
     substring_ranked = _substring_rank(corpus, query, limit=50)
-    fused = rrf_fuse([bm25_ranked, vector_ranked, substring_ranked])[:limit]
-    return [Hit(rel, _excerpt(corpus[rel], rel, query)) for rel in fused]
+    # Third RRF signal: BM25 tokenizes [a-z0-9]+ only, so single-char queries
+    # like "e" (test_hybrid_search_respects_tag_filter) need substring fallback.
+    fused = rrf_fuse([bm25_ranked, vector_ranked, substring_ranked])
+    filtered = [rel for rel in fused if _query_tokens_match(corpus[rel], query)][:limit]
+    return [Hit(rel, _excerpt(corpus[rel], rel, query)) for rel in filtered]
