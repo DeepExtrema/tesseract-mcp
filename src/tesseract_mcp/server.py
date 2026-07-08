@@ -174,7 +174,7 @@ def onboard() -> dict:
         "find_entity(query, type?) / related_notes(path, hops?) / graph_stats()",
         "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
     ]
-    db = indexer.db_path()
+    db = indexer.db_path(get_vault().root)
     if db.exists():
         graph_status = cache_mod.stats(db)
     else:
@@ -193,7 +193,7 @@ def _make_extractor():
 
 
 def _graph_db():
-    db = indexer.db_path()
+    db = indexer.db_path(get_vault().root)
     if not db.exists():
         raise VaultError("Graph cache not built yet — run index_brain first.")
     return db
