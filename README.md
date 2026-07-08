@@ -20,7 +20,8 @@ replicates changes to all machines via CouchDB.
 | Tool | Purpose |
 |---|---|
 | `onboard` | Call first in a new session — constitution, routing, cheat-sheet, graph status |
-| `search_brain` | Full-text search, optional tag/folder filters |
+| `search_brain` | Hybrid search (BM25 + vector, fused) — optional tag/folder filters |
+| `context_bundle` | One call: hybrid search hits + their graph entities + related notes |
 | `read_note` | Read any note |
 | `log_session` | Session log into `Claude/Sessions/` + index update |
 | `capture` | Quick thought into `Claude/Inbox/` |

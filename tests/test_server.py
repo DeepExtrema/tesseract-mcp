@@ -27,7 +27,7 @@ def test_all_tools_registered():
         "upsert_concept", "write_note", "add_task", "list_tasks",
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
-        "consolidate_graph", "onboard",
+        "consolidate_graph", "onboard", "context_bundle",
     }
 
 
@@ -199,3 +199,32 @@ def test_onboard_tolerates_missing_guides():
     got = server.onboard()  # fixture vault has neither guide file
     assert "not installed" in got["constitution"]
     assert "not installed" in got["vault_guide"]
+
+
+def test_context_bundle_composes_search_and_graph(monkeypatch):
+    from tesseract_mcp.extractor import Extraction
+
+    class FakeExtractor:
+        def extract(self, path, content):
+            if "Sentinel" in path:
+                return Extraction(
+                    [{"name": "Acme Corp", "type": "organization", "aliases": [], "summary": "Co."}],
+                    [],
+                )
+            return Extraction()
+
+    monkeypatch.setattr(server, "_make_extractor", lambda: FakeExtractor())
+    server.index_brain()
+
+    bundle = server.context_bundle("ingestion pipeline")
+    assert bundle["hits"]
+    assert bundle["hits"][0]["path"] == "Projects/Sentinel ESG.md"
+    assert any(e["name"] == "Acme Corp" for e in bundle["entities"])
+    assert isinstance(bundle["related_notes"], list)
+
+
+def test_context_bundle_without_graph_still_returns_hits():
+    bundle = server.context_bundle("ingestion pipeline")
+    assert bundle["hits"]
+    assert bundle["entities"] == []
+    assert bundle["related_notes"] == []
