@@ -181,6 +181,36 @@ def test_state_dir_requires_vault_root_or_env(tmp_path, monkeypatch):
         indexer.state_dir()
 
 
+def test_run_precomputes_embeddings_by_default(vault, monkeypatch):
+    from tesseract_mcp import embeddings as embeddings_mod
+
+    calls = []
+
+    class FakeEmbedder:
+        def embed_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.0] for _ in texts]
+
+    monkeypatch.setattr(embeddings_mod, "SentenceTransformerEmbedder", FakeEmbedder)
+    indexer.run(vault, FakeExtractor())
+    assert calls  # embeddings were computed for the vault's notes
+
+
+def test_run_can_skip_embeddings(vault, monkeypatch):
+    from tesseract_mcp import embeddings as embeddings_mod
+
+    calls = []
+
+    class FakeEmbedder:
+        def embed_batch(self, texts):
+            calls.append(list(texts))
+            return [[0.0] for _ in texts]
+
+    monkeypatch.setattr(embeddings_mod, "SentenceTransformerEmbedder", FakeEmbedder)
+    indexer.run(vault, FakeExtractor(), precompute_embeddings=False)
+    assert calls == []
+
+
 def test_stale_mentions_retracted_on_reprocess(vault):
     from tesseract_mcp.graphstore import entity_rel_path
 

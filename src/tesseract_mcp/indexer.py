@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from . import cache
+from . import embeddings as embeddings_mod
 from .extractor import CliExtractor, ExtractorError
 from .graphstore import GRAPH_ROOT, GraphStore
 from .search import SKIP_DIRS
@@ -83,6 +84,7 @@ def run(
     batch: int = DEFAULT_BATCH,
     force: bool = False,
     ignore: tuple[str, ...] = DEFAULT_IGNORE,
+    precompute_embeddings: bool = True,
 ) -> dict:
     manifest = load_manifest(vault.root)
     current = scan_notes(vault, ignore)
@@ -125,6 +127,9 @@ def run(
     save_manifest(manifest, vault.root)
     if counts["processed"] or not db_path(vault.root).exists():
         cache.rebuild(vault, db_path(vault.root))
+    if precompute_embeddings:
+        embedder = embeddings_mod.SentenceTransformerEmbedder()
+        embeddings_mod.get_note_vectors(vault, state_dir(vault.root), embedder)
     return counts
 
 
