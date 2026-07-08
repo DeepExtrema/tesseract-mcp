@@ -6,7 +6,8 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, indexer, notes, search as search_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, tasks as tasks_mod
+from .embeddings import SentenceTransformerEmbedder
 from .extractor import CliExtractor
 from .vault import Vault, VaultError
 
@@ -30,6 +31,7 @@ evergreen knowledge (search first, extend rather than duplicate)."""
 mcp = FastMCP("tesseract", instructions=INSTRUCTIONS)
 
 _vault: Vault | None = None
+_embedder = None
 
 
 def get_vault() -> Vault:
@@ -44,6 +46,13 @@ def get_vault() -> Vault:
     return _vault
 
 
+def _get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformerEmbedder()
+    return _embedder
+
+
 @mcp.tool()
 def search_brain(
     query: str,
@@ -51,9 +60,14 @@ def search_brain(
     folder: str | None = None,
     limit: int = 20,
 ) -> list[dict]:
-    """Full-text search across the whole vault. Optionally filter by
-    frontmatter tags or restrict to a subfolder. Returns path + excerpt."""
-    hits = search_mod.search(get_vault(), query, tags=tags, folder=folder, limit=limit)
+    """Hybrid full-text + semantic search across the whole vault (BM25 +
+    vector similarity, fused). Optionally filter by frontmatter tags or
+    restrict to a subfolder. Returns path + excerpt, ranked by relevance."""
+    vault = get_vault()
+    hits = hybrid.hybrid_search(
+        vault, indexer.state_dir(vault.root), _get_embedder(),
+        query, tags=tags, folder=folder, limit=limit,
+    )
     return [{"path": h.path, "excerpt": h.excerpt} for h in hits]
 
 

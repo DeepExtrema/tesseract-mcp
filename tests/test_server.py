@@ -51,6 +51,24 @@ def test_search_brain_limit():
     assert len(server.search_brain("e", limit=1)) == 1
 
 
+def test_search_brain_uses_hybrid_engine(monkeypatch):
+    from tesseract_mcp import hybrid as hybrid_mod
+    from tesseract_mcp.search import Hit
+
+    called = {}
+
+    def fake_hybrid_search(vault, state_root, embedder, query, tags=None, folder=None, limit=20):
+        called["query"] = query
+        called["limit"] = limit
+        return [Hit("Fake.md", "fake excerpt")]
+
+    monkeypatch.setattr(hybrid_mod, "hybrid_search", fake_hybrid_search)
+    result = server.search_brain("anything", limit=5)
+    assert called["query"] == "anything"
+    assert called["limit"] == 5
+    assert result == [{"path": "Fake.md", "excerpt": "fake excerpt"}]
+
+
 def test_read_note():
     assert "Remember to check" in server.read_note("Daily.md")
 
