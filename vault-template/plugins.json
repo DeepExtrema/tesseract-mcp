@@ -8,5 +8,9 @@
   {"id": "tag-wrangler", "repo": "pjeby/tag-wrangler", "version": "0.6.4"},
   {"id": "obsidian-kanban", "repo": "mgmeyers/obsidian-kanban", "version": "2.0.51"},
   {"id": "table-editor-obsidian", "repo": "tgrosinger/advanced-tables-obsidian", "version": "0.23.2"},
-  {"id": "obsidian-importer", "repo": "obsidianmd/obsidian-importer", "version": "1.8.12"}
+  {"id": "obsidian-importer", "repo": "obsidianmd/obsidian-importer", "version": "1.8.12"},
+  {"id": "extended-graph", "repo": "ElsaTam/obsidian-extended-graph", "version": "2.7.7"},
+  {"id": "graph-styler", "repo": "moonweave/obsidian-graph-styler", "version": "0.1.5"},
+  {"id": "translucent-bg", "repo": "mellowmarsh-git/Obsidian-Translucent-BG", "version": "1.1.2"},
+  {"id": "obsidian-style-settings", "repo": "mgmeyers/obsidian-style-settings", "version": "1.0.9"}
 ]

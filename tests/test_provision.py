@@ -41,9 +41,9 @@ def good_assets(plugin_id="dataview", version="0.5.68", base=BASE):
     }
 
 
-def test_repo_manifest_loads_ten_pinned_plugins():
+def test_repo_manifest_loads_fourteen_pinned_plugins():
     specs = load_plugin_manifest()
-    assert len(specs) == 10
+    assert len(specs) == 14
     by_id = {s.id: s for s in specs}
     assert by_id["smart-connections"].repo == "brianpetro/obsidian-smart-connections"
     assert all(s.version for s in specs)
