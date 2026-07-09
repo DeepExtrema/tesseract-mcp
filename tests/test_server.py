@@ -28,6 +28,7 @@ def test_all_tools_registered():
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
         "consolidate_graph", "onboard", "context_bundle",
+        "organize_vault", "undo_move",
     }
 
 
@@ -226,3 +227,27 @@ def test_context_bundle_without_graph_still_returns_hits():
     assert bundle["hits"]
     assert bundle["entities"] == []
     assert bundle["related_notes"] == []
+
+
+def test_organize_vault_dry_run_default(vault_dir):
+    (vault_dir / "02 - Space").mkdir()
+    (vault_dir / "02 - Space" / "Orbits.md").write_text("space orbits\n", encoding="utf-8")
+    (vault_dir / "Loose.md").write_text("space loose note\n", encoding="utf-8")
+
+    class FakeEmbedder:
+        def embed_batch(self, texts):
+            return [[1.0, 0.0] if "space" in t.lower() else [0.0, 1.0] for t in texts]
+
+    import tesseract_mcp.server as srv
+    srv._embedder = FakeEmbedder()
+    try:
+        report = server.organize_vault()
+        assert (vault_dir / "Loose.md").is_file()  # dry-run: nothing moved
+        assert any(m["from"] == "Loose.md" for m in report["moved"])
+    finally:
+        srv._embedder = None
+
+
+def test_undo_move_tool_raises_cleanly_when_nothing_to_undo():
+    with pytest.raises(VaultError, match="No undoable move"):
+        server.undo_move("02 - Space/Nope.md")
