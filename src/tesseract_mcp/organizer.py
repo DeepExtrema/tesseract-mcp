@@ -9,10 +9,16 @@ threshold, hard exclusions below.
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
+from . import indexer
+from .mover import reverse_rewrites
 from .search import parse_frontmatter
-from .vault import Vault
+from .vault import Vault, VaultError
 
 EXCLUDED_DIRS = frozenset({
     "Claude", "00 - Maps of Content", ".obsidian", ".smart-env",
@@ -20,6 +26,11 @@ EXCLUDED_DIRS = frozenset({
 })
 VOTE_K = 10
 VOTE_THRESHOLD = 0.7
+ORGANIZER_NOTE = "Claude/Organizer.md"
+_NOTE_SEED = (
+    "# Organizer\n\nAutonomous move log and proposals. "
+    "See constitution → Organizer.\n\n## Log\n"
+)
 
 
 def discover_taxonomy(vault: Vault) -> list[str]:
@@ -98,3 +109,85 @@ def classify(
     winner = max(votes, key=votes.get)
     share = votes[winner] / sum(votes.values())
     return Classification(winner, share, [p for p, _ in top])
+
+
+def journal_path(vault: Vault) -> Path:
+    return indexer.state_dir(vault.root) / "organizer_journal.jsonl"
+
+
+def _ensure_note(vault: Vault) -> None:
+    try:
+        vault.read(ORGANIZER_NOTE)
+    except VaultError:
+        vault.write(ORGANIZER_NOTE, _NOTE_SEED)
+
+
+def record_move(
+    vault: Vault, record: dict, share: float, neighbors: list[str]
+) -> None:
+    entry = {
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "from": record["from"],
+        "to": record["to"],
+        "share": share,
+        "neighbors": neighbors,
+        "rewrites": record["rewrites"],
+        "undone": False,
+    }
+    with journal_path(vault).open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+    _ensure_note(vault)
+    stem = record["to"].rsplit("/", 1)[-1][:-3]
+    vault.append(
+        ORGANIZER_NOTE,
+        f"- {entry['ts']} — moved [[{record['to'][:-3]}|{stem}]] "
+        f"from `{record['from']}` (share {share:.2f})\n",
+    )
+
+
+def undo_move(vault: Vault, note_rel: str) -> dict:
+    jp = journal_path(vault)
+    entries = []
+    if jp.exists():
+        entries = [
+            json.loads(line)
+            for line in jp.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    target_idx = None
+    for i in range(len(entries) - 1, -1, -1):
+        if entries[i]["to"] == note_rel and not entries[i].get("undone"):
+            target_idx = i
+            break
+    if target_idx is None:
+        raise VaultError(f"No undoable move found for: {note_rel}")
+    entry = entries[target_idx]
+    src = vault.resolve(entry["to"])
+    dst = vault.resolve(entry["from"])
+    if not src.is_file():
+        raise VaultError(f"Cannot undo: file no longer at {entry['to']}")
+    if dst.exists():
+        raise VaultError(f"Cannot undo: original location occupied: {entry['from']}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(src, dst)
+    reverse_rewrites(
+        vault,
+        entry["from"],
+        entry["to"],
+        [r["path"] for r in entry["rewrites"]],
+    )
+    manifest = indexer.load_manifest(vault.root)
+    if entry["to"] in manifest["hashes"]:
+        manifest["hashes"][entry["from"]] = manifest["hashes"].pop(entry["to"])
+        indexer.save_manifest(manifest, vault.root)
+    entries[target_idx]["undone"] = True
+    jp.write_text(
+        "".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8"
+    )
+    _ensure_note(vault)
+    vault.append(
+        ORGANIZER_NOTE,
+        f"- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — UNDID move of "
+        f"`{entry['to']}` back to `{entry['from']}`\n",
+    )
+    return {"restored": entry["from"], "was": entry["to"]}

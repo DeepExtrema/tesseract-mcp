@@ -2,7 +2,9 @@ import json
 
 import pytest
 
+from tesseract_mcp.mover import move_note
 from tesseract_mcp.organizer import (
+    ORGANIZER_NOTE,
     VOTE_K,
     VOTE_THRESHOLD,
     Classification,
@@ -10,8 +12,11 @@ from tesseract_mcp.organizer import (
     discover_taxonomy,
     iter_candidates,
     iter_organized,
+    journal_path,
+    record_move,
+    undo_move,
 )
-from tesseract_mcp.vault import Vault
+from tesseract_mcp.vault import Vault, VaultError
 
 
 @pytest.fixture
@@ -111,3 +116,39 @@ def test_classify_no_vector_or_no_labeled_returns_none():
     assert got.folder is None and got.share == 0.0
     got2 = classify("X.md", {"X.md": SPACE}, [])          # nothing labeled
     assert got2.folder is None
+
+
+@pytest.fixture
+def moved(org_vault):
+    record = move_note(org_vault, "Loose Space Note.md", "02 - Space/Loose Space Note.md")
+    record_move(org_vault, record, share=0.85,
+                neighbors=["02 - Space/NASA JPL.md"])
+    return record
+
+
+def test_record_move_writes_jsonl_and_note(org_vault, moved):
+    lines = journal_path(org_vault).read_text(encoding="utf-8").strip().splitlines()
+    entry = json.loads(lines[-1])
+    assert entry["from"] == "Loose Space Note.md"
+    assert entry["to"] == "02 - Space/Loose Space Note.md"
+    assert entry["share"] == 0.85
+    note = org_vault.read(ORGANIZER_NOTE)
+    assert "Loose Space Note" in note and "0.85" in note
+
+
+def test_undo_restores_location_and_journal(org_vault, moved):
+    result = undo_move(org_vault, "02 - Space/Loose Space Note.md")
+    assert result["restored"] == "Loose Space Note.md"
+    assert (org_vault.root / "Loose Space Note.md").is_file()
+    assert not (org_vault.root / "02 - Space" / "Loose Space Note.md").exists()
+
+
+def test_undo_twice_raises(org_vault, moved):
+    undo_move(org_vault, "02 - Space/Loose Space Note.md")
+    with pytest.raises(VaultError, match="No undoable move"):
+        undo_move(org_vault, "02 - Space/Loose Space Note.md")
+
+
+def test_undo_unknown_path_raises(org_vault):
+    with pytest.raises(VaultError, match="No undoable move"):
+        undo_move(org_vault, "02 - Space/Never Moved.md")
