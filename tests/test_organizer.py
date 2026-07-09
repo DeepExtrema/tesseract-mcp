@@ -228,3 +228,15 @@ def test_root_agent_guides_are_never_candidates(org_vault):
     touched = [m["from"] for m in report["moved"]] + [p["path"] for p in report["proposals"]]
     assert "CLAUDE.md" not in touched and "AGENTS.md" not in touched
     assert (org_vault.root / "CLAUDE.md").is_file()
+
+
+def test_dot_directories_never_taxonomy(org_vault):
+    (org_vault.root / ".claude" / "commands").mkdir(parents=True)
+    (org_vault.root / ".claude" / "commands" / "day.md").write_text(
+        "space daily note command\n", encoding="utf-8")
+    assert not any(f.startswith(".") for f in discover_taxonomy(org_vault))
+    assert ".claude/commands/day.md" not in iter_candidates(org_vault)
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=True)
+    touched = [m["from"] for m in report["moved"]] + [p["path"] for p in report["proposals"]]
+    assert not any(t.startswith(".claude/") for t in touched)
+    assert (org_vault.root / ".claude" / "commands" / "day.md").is_file()
