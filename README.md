@@ -7,35 +7,34 @@ knowledge base: a plain-markdown Obsidian vault replicated by Self-hosted
 LiveSync (CouchDB). This MCP server is how agents search it, extend it, and
 keep it organized.
 
-<!-- SCREENSHOT: hero-graph -->
+![The vault's semantic graph in Obsidian](docs/assets/hero-graph.png)
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    subgraph "Agent side"
-        C[Claude / any MCP client]
+    subgraph Agent side
+        C[Claude or any MCP client]
     end
     C <-->|MCP tools| S[tesseract-mcp server]
     S <-->|read/write markdown| V[(Obsidian vault)]
-    S <-->|rebuildable caches| Q[(SQLite + embeddings<br/>~/.tesseract-mcp/)]
+    S <-->|rebuildable caches| Q[(SQLite + embeddings in ~/.tesseract-mcp/)]
     V <-->|LiveSync| DB[(CouchDB)]
     DB <-->|LiveSync| M2[Vault on other machines]
 ```
 
 The vault's markdown is the single source of truth. Everything the server
-keeps outside it — the SQLite graph mirror, embedding caches — is disposable
-and rebuilt from the vault on demand.
+computes — the search index, embeddings, the graph cache — lives under
+`~/.tesseract-mcp/` and is rebuildable from the vault on demand, so it never
+has to travel through LiveSync itself.
 
 ## What's inside
 
 ### Hybrid search
 BM25 keyword ranking and embedding cosine similarity, fused with Reciprocal
-Rank Fusion (k=60) — rank-position fusion means the two score spaces never
-need to be normalized against each other. A substring ranker joins the
-fusion only when BM25 returns nothing (queries its `[a-z0-9]+` tokenizer
-can't match). Vectors reuse Obsidian's Smart Connections embeddings when
-fresh, with a same-model local fallback (TaylorAI/bge-micro-v2) so the
+Rank Fusion — rank-based fusion means the two score spaces never need to be
+normalized against each other. Vectors reuse Obsidian's Smart Connections
+embeddings when fresh, with a same-model local fallback (bge-micro-v2) so the
 similarity space is never mixed.
 
 ### A semantic knowledge graph (GraphRAG)
@@ -43,7 +42,7 @@ An LLM pass extracts people, organizations, domains, topics, projects and
 sources from notes into real markdown entity notes under `Claude/Graph/` —
 visible in Obsidian's graph, synced like everything else, and mirrored into
 SQLite for traversal. `related_notes` walks entity chains between notes;
-`context_bundle` composes hybrid search + graph context in one call.
+`context_bundle` composes hybrid search and graph context in one call.
 
 ### A write contract agents can't break
 Agents write freely only under `Claude/` (sessions, concepts, inbox, tasks,
@@ -53,8 +52,8 @@ human-readable rules live in the vault as a constitution.
 
 ### An autonomous organizer
 New notes are filed into the existing folder taxonomy by embedding
-neighbor-vote (≥ 0.7 agreement moves the note; less queues a human
-proposal). Every move is journaled and reversible.
+neighbor-vote (≥0.7 agreement moves the note; less queues a human proposal).
+Every move is journaled and reversible.
 
 ### One-command vault provisioning
 `python -m tesseract_mcp.provision <path-to-vault>` installs a pinned plugin
@@ -104,11 +103,6 @@ claude mcp add --scope user tesseract `
 
 Then open the vault once in Obsidian (disable Restricted Mode, complete
 LiveSync setup) and run the `index_brain` tool.
-
-To keep the graph fresh automatically, schedule
-`python -m tesseract_mcp.indexer <path-to-vault> --backend codex` on a
-nightly cadence — it only processes new/changed notes, so repeat runs are
-cheap.
 
 ## Going deeper
 
