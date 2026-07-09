@@ -233,7 +233,7 @@ produces — the BM25-adjacent search index (rebuilt fresh per query, not
 persisted at all), the fallback embedding cache, and the `graph.db` SQLite
 mirror — lives under `~/.tesseract-mcp/` and is derived, disposable state.
 Delete that entire directory and running `index_brain` (or
-`python -m tesseract_mcp.indexer --rebuild-only`) rebuilds it from the
+`python -m tesseract_mcp.indexer <vault> --rebuild-only`) rebuilds it from the
 markdown alone; nothing is lost.
 
 That separation is what makes sync simple: Self-hosted LiveSync, backed by
