@@ -9,6 +9,21 @@ replicates changes to all machines via CouchDB.
     python -m venv .venv
     .venv\Scripts\pip install -e .
 
+## Provision a new vault
+
+    python -m tesseract_mcp.provision C:\Path\To\NewVault
+
+Installs the curated plugin set (pinned in `vault-template/plugins.json`),
+enables them, seeds Smart Connections settings (embed model pinned to the
+one `sc_adapter` reads), and installs the Claude/ conventions tree. Then:
+open the vault once in Obsidian and turn off Restricted Mode, complete
+LiveSync via Setup-URI, and run `index_brain`.
+
+    python -m tesseract_mcp.provision C:\Path\To\Vault --check
+
+reports pinned vs installed versions (ok / drift / missing). Upgrading a
+plugin = bump its pin in `vault-template/plugins.json`, re-run provision.
+
 ## Register with Claude Code
 
     claude mcp add --scope user tesseract `
