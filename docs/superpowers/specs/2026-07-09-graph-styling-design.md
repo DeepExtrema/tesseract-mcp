@@ -15,11 +15,26 @@ provisioned vault gets them, and applied to the live Tesseract vault.
 
 ## Decisions already made
 
-- **Research and propose:** the user has no specific plugins/themes in
-  mind; the implementation plan starts with a research task presenting
-  2–3 candidates per category (graph-styling plugin; transparent theme or
-  translucency plugin) with screenshots and maintenance signals. **The
-  user picks; nothing is pinned unpicked.**
+- **Research gate RESOLVED 2026-07-09** via a deep-research report (July
+  2026 Obsidian ecosystem survey, user-commissioned). The user picked:
+  - **Extended Graph** (ElsaTam, actively patched) — the styling engine:
+    per-tag/path node colors, shapes, images, saved views, SVG export.
+  - **Graph Styler** (Moonweave, MIT) — one-click curated screenshot
+    palettes + glow snippet; auto-backs-up `graph.json` before writing.
+  - **Translucent BG** + **Style Settings** — native Windows 11
+    Mica/Acrylic via Electron's `setBackgroundMaterial`; tint/opacity via
+    Style Settings. Desktop/Windows-only; no external tools.
+  All three plugins (plus Style Settings if not already pinned) go into
+  `vault-template/plugins.json` at exact pinned versions.
+  Caveat recorded from the report: community graph plugins ride an
+  undocumented core API — **back up `.obsidian/graph.json` before
+  enabling** (Graph Styler does this itself; the provisioner apply step
+  must do it too).
+- **Theme note:** the picked transparency approach is plugin-based, so v1
+  ships with plugins only and the `themes.json` provisioner capability
+  (section 2 below) is **DEFERRED** — do not build it until a theme is
+  actually pinned. Section 2 is kept as the agreed design for that future
+  moment.
 - **Target: template + live vault.** Chosen items are pinned in
   `vault-template/` AND applied to `C:\Vaults\Tesseract` so the styled
   graph is visible immediately.
@@ -34,9 +49,10 @@ settings needed to make the graph look right ship as a settings template
 in `vault-template/` (absent-only overlay, existing provisioner
 behavior).
 
-### 2. Theme support (new provisioner capability)
+### 2. Theme support (new provisioner capability) — DEFERRED, design retained
 
-Themes are not plugins; the provisioner gains a parallel mechanism:
+Themes are not plugins; when a theme is eventually pinned, the provisioner
+gains a parallel mechanism:
 - `vault-template/themes.json`: pinned theme name + version + GitHub
   release source (mirrors `plugins.json` structure).
 - Installer downloads the theme into `.obsidian/themes/<name>/`

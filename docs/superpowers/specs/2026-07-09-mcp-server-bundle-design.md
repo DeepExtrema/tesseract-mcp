@@ -81,17 +81,29 @@ Error handling:
 - A failed `claude mcp add` for one server does not abort the rest; the
   summary lists per-server outcomes.
 
-### 3. Starter set — researched, gated
+### 3. Starter set — RESOLVED 2026-07-09
 
-The implementation plan's first task is research, not code: survey current,
-well-maintained MCP servers fitting the user's workflow (Obsidian vault +
-software development + job search) — candidate space includes filesystem,
-fetch/web, GitHub, and library-docs servers — and present a shortlist with
-maintenance signals and trade-offs, including whether duplicating
-plugin-provided servers (e.g. GitHub) is worth it for plugin-independence.
+The research gate is closed: a deep-research report (July 2026 MCP ecosystem
+survey, user-commissioned) was reviewed and the user picked the v1 set:
 
-**Nothing enters the manifest without the user's explicit pick.** The
-manifest ships initially with `tesseract` plus only the picked servers.
+| Server | Pin | Why |
+|---|---|---|
+| `tesseract` | this clone | The mind database itself. |
+| `mcp-server-fetch` | `==2026.6.4` (PyPI, official) | Web ingest: URL → clean markdown — the missing "web clipper" stage of the knowledge-base loop (cf. Karpathy's LLM Knowledge Bases post, Apr 2026). stdio, no API key. Windows: set `PYTHONIOENCODING=utf-8` in the entry's env. |
+| `arxiv-mcp-server` | latest pinned exact at implementation time (PyPI ~0.4.12+, blazickjp) | Paper ingest: arXiv search/download → markdown. Treat paper content as untrusted input; do not chain with shell/filesystem tools unguarded. |
+
+Explicitly excluded, with rationale recorded in the manifest's `why` notes as
+bench-triggers for future promotion:
+- **filesystem server** — Claude Code built-ins cover it; pure context tax.
+- **GitHub standalone server** — 17k–55k tokens of schema per turn; the
+  Claude Code plugin + `gh` CLI are strictly cheaper.
+- **context7 standalone** — already provided by plugin; standalone adds a
+  1,000 req/month cloud dependency. Trigger: dropping the plugin.
+- **firecrawl-mcp** (`@3.22.3`) — trigger: plain fetch fails on >~20% of
+  ingested sources (JS-heavy/anti-bot pages).
+- **memory servers** — nothing to adopt; temporal edges, salience-gated
+  writes, and decay scoring are future tesseract features, tracked in the
+  vault, out of scope here.
 
 ## Testing
 
