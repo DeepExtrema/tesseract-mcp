@@ -49,6 +49,17 @@ def load_plugin_manifest(path: Path | None = None) -> list[PluginSpec]:
     return specs
 
 
+def load_enabled_ids(path: Path | None = None) -> list[str]:
+    """Plugin ids to merge into community-plugins.json on provision."""
+    p = path or TEMPLATE_DIR / "community-plugins.json"
+    if not p.is_file():
+        return [s.id for s in load_plugin_manifest()]
+    ids = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        raise ProvisionError("community-plugins.json must be a JSON array of plugin ids")
+    return ids
+
+
 RELEASE_URL = "https://github.com/{repo}/releases/download/{version}/{filename}"
 USER_AGENT = "tesseract-mcp-provisioner"
 
@@ -175,7 +186,8 @@ def provision(vault_root: str | Path, fetch=http_fetch) -> dict:
             errors[spec.id] = str(e)
 
     enabled = enable_plugins(
-        vault_root, [s.id for s in specs if s.id not in errors]
+        vault_root,
+        [i for i in load_enabled_ids() if i in plugins and plugins[i] in ("ok", "installed")],
     )
     overlays = apply_overlays(vault_root)
     conventions = install_conventions(vault_root)
