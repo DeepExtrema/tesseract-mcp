@@ -150,8 +150,10 @@ is never the source of truth.
   from the entities a given note mentions and walks the entity graph
   outward for a configurable number of `hops`, returning every other note
   connected through that chain along with a human-readable description of
-  the chain itself (e.g. `Note A — (works_at) Acme — (operates_in) Cloud
-  Infra`). `context_bundle` composes this with hybrid search in a single MCP
+  the entity path (e.g. `Acme (operates_in) Cloud Infra` — the chain names
+  the entities and the typed edges between them; the note→entity mention
+  hops at either end carry no relation label, only entity-to-entity edges
+  do). `context_bundle` composes this with hybrid search in a single MCP
   call: it runs `search_brain`, collects every entity mentioned by the hits,
   and returns their `related_notes` alongside the hits — so a client doesn't
   need three separate round-trips to assemble GraphRAG-style context.
