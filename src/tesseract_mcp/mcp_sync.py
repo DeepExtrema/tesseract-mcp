@@ -8,6 +8,8 @@ Drift and extras are reported with remediation commands for the human.
 from __future__ import annotations
 
 import json
+import shlex
+import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -117,3 +119,64 @@ def classify(resolved_specs: list[ServerSpec], config_servers: dict[str, dict]) 
                 result.drifted.append((spec.name, diff))
     result.extras = sorted(set(config_servers) - manifest_names)
     return result
+
+
+def build_add_command(spec: ServerSpec) -> list[str]:
+    cmd = ["claude", "mcp", "add", "--scope", "user"]
+    if spec.url:
+        return cmd + ["--transport", "http", spec.name, spec.url]
+    cmd.append(spec.name)
+    for k, v in spec.env.items():
+        cmd += ["-e", f"{k}={v}"]
+    cmd.append("--")
+    cmd.append(spec.command)
+    cmd += spec.args
+    return cmd
+
+
+def _remediation(name: str) -> str:
+    return (f"  to fix drift manually: claude mcp remove --scope user {name} "
+            f"&& re-run this sync")
+
+
+def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
+             vault: str | None, check_only: bool,
+             runner=subprocess.run) -> int:
+    try:
+        config_servers = read_config(config_path)
+    except ConfigParseError as e:
+        print(f"ABORT (nothing changed): {e}")
+        return 2
+    try:
+        specs = [resolve(s, repo_root, vault) for s in load_manifest(manifest_path)]
+    except MissingVaultError as e:
+        print(f"ABORT (nothing changed): {e}")
+        return 2
+
+    result = classify(specs, config_servers)
+    for name in result.present:
+        print(f"present : {name}")
+    for name, diff in result.drifted:
+        print(f"DRIFTED : {name} — {diff}\n{_remediation(name)}")
+    for name in result.extras:
+        print(f"extra   : {name} (not in manifest; left alone)")
+    for spec in result.missing:
+        print(f"MISSING : {spec.name} — {spec.why}")
+
+    if check_only:
+        return 1 if (result.missing or result.drifted) else 0
+
+    failures = 0
+    for spec in result.missing:
+        argv = build_add_command(spec)
+        print(f"register: {' '.join(shlex.quote(a) for a in argv)}")
+        try:
+            proc = runner(argv, check=False)
+        except FileNotFoundError:
+            print("claude CLI not found on PATH. Run the printed command(s) "
+                  "manually, or install Claude Code. Nothing was registered.")
+            return 3
+        if getattr(proc, "returncode", 1) != 0:
+            print(f"  FAILED (exit {proc.returncode}) — continuing with the rest")
+            failures += 1
+    return 1 if failures else 0

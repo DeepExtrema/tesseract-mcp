@@ -8,10 +8,12 @@ from tesseract_mcp.mcp_sync import (
     ConfigParseError,
     MissingVaultError,
     ServerSpec,
+    build_add_command,
     classify,
     load_manifest,
     read_config,
     resolve,
+    run_sync,
 )
 
 
@@ -109,3 +111,100 @@ def test_classify_extra_config_env_is_not_drift():
                         "env": {"PYTHONIOENCODING": "utf-8", "UNRELATED": "1"}}}
     result = classify([_spec("fetch", env={"PYTHONIOENCODING": "utf-8"})], config)
     assert result.present == ["fetch"]
+
+
+def test_build_add_command_stdio_with_env():
+    spec = _spec("fetch", env={"PYTHONIOENCODING": "utf-8"})
+    cmd = build_add_command(spec)
+    assert cmd == ["claude", "mcp", "add", "--scope", "user", "fetch",
+                   "-e", "PYTHONIOENCODING=utf-8", "--",
+                   "uvx", "mcp-server-fetch@2026.6.4"]
+
+
+def test_run_sync_registers_only_missing(tmp_path, capsys):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    calls = []
+
+    def fake_runner(argv, **kw):
+        calls.append(argv)
+        class R: returncode = 0
+        return R()
+
+    code = run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    assert code == 0
+    assert len(calls) == 1 and calls[0][:3] == ["claude", "mcp", "add"]
+
+
+def test_run_sync_never_touches_existing_entries(tmp_path):
+    """Additive-only invariant: pre-existing config is byte-identical after sync."""
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["DIFFERENT@9.9.9"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    original = json.dumps({"mcpServers": {"fetch": {
+        "type": "stdio", "command": "uvx",
+        "args": ["mcp-server-fetch@2026.6.4"], "env": {}}}})
+    config.write_text(original, encoding="utf-8")
+    calls = []
+
+    def fake_runner(argv, **kw):
+        calls.append(argv)
+        class R: returncode = 0
+        return R()
+
+    run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    assert calls == []                       # drifted -> reported, never re-registered
+    assert config.read_text(encoding="utf-8") == original
+
+
+def test_run_sync_check_mode_exit_codes(tmp_path):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    assert run_sync(manifest, config, tmp_path, None, check_only=True) == 1
+    config.write_text(json.dumps({"mcpServers": {"fetch": {
+        "type": "stdio", "command": "uvx",
+        "args": ["mcp-server-fetch@2026.6.4"], "env": {}}}}), encoding="utf-8")
+    assert run_sync(manifest, config, tmp_path, None, check_only=True) == 0
+
+
+def test_run_sync_unparseable_config_aborts_before_subprocess(tmp_path):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text("{broken", encoding="utf-8")
+    calls = []
+
+    def fake_runner(argv, **kw):
+        calls.append(argv)
+
+    code = run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    assert code == 2 and calls == []
+
+
+def test_run_sync_claude_missing_prints_commands_exit_3(tmp_path, capsys):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+
+    def fake_runner(argv, **kw):
+        raise FileNotFoundError("claude not found")
+
+    code = run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "claude mcp add" in out          # printed for manual use
