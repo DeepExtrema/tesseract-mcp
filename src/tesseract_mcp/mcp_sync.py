@@ -7,7 +7,9 @@ Drift and extras are reported with remediation commands for the human.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field, replace
@@ -180,3 +182,22 @@ def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
             print(f"  FAILED (exit {proc.returncode}) — continuing with the rest")
             failures += 1
     return 1 if failures else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    repo_root = Path(__file__).resolve().parents[2]
+    parser = argparse.ArgumentParser(
+        description="Additively sync the curated MCP server set into Claude Code (user scope).")
+    parser.add_argument("--check", action="store_true",
+                        help="report only; exit 1 if missing/drifted")
+    parser.add_argument("--vault", default=os.environ.get("TESSERACT_VAULT_PATH"),
+                        help="vault path for {VAULT} (default: TESSERACT_VAULT_PATH env)")
+    parser.add_argument("--manifest", default=str(repo_root / "mcp-servers.json"))
+    parser.add_argument("--config", default=str(Path.home() / ".claude.json"))
+    args = parser.parse_args(argv)
+    return run_sync(Path(args.manifest), Path(args.config), repo_root,
+                    args.vault, check_only=args.check)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

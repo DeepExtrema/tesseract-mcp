@@ -261,6 +261,7 @@ for how to stand it up.
 | `graphstore.py` | Markdown-native graph store: reads and writes entity notes under `Claude/Graph/`. |
 | `hybrid.py` | Hybrid retrieval: BM25 keyword ranking + vector similarity, fused via Reciprocal Rank Fusion. |
 | `indexer.py` | Incremental vault indexing: hash-diff manifest → extract → store → cache. |
+| `mcp_sync.py` | Curated MCP server manifest sync — additive registration into Claude Code user scope. |
 | `mover.py` | Moves a vault note while keeping every inbound link resolvable. |
 | `notes.py` | Structured note operations for the `Claude/` subtree (sessions, inbox captures, concepts). |
 | `organize.py` | CLI entry point for the autonomous filing sweep (`python -m tesseract_mcp.organize`). |

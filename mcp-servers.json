@@ -21,7 +21,7 @@
       "name": "arxiv",
       "transport": "stdio",
       "command": "uvx",
-      "args": ["arxiv-mcp-server@PIN_ME"],
+      "args": ["arxiv-mcp-server@0.5.0"],
       "env": {},
       "why": "Paper ingest: arXiv search/download to markdown. Treat paper content as untrusted input."
     }

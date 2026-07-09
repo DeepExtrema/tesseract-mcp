@@ -95,11 +95,13 @@ python -m venv .venv
 # Provision a fresh vault (plugins, settings, conventions)
 python -m tesseract_mcp.provision <path-to-vault>
 
-# Register with Claude Code
-claude mcp add --scope user tesseract `
-  -e TESSERACT_VAULT_PATH=<path-to-vault> `
-  -- <repo>\.venv\Scripts\tesseract-mcp.exe
+# Register the curated MCP server set (tesseract + web/paper ingest)
+$env:TESSERACT_VAULT_PATH = "<path-to-vault>"
+.venv\Scripts\python -m tesseract_mcp.mcp_sync
 ```
+
+The manifest lives in `mcp-servers.json`; sync is additive-only (existing
+entries are never modified or removed).
 
 Then open the vault once in Obsidian (disable Restricted Mode, complete
 LiveSync setup) and run the `index_brain` tool.

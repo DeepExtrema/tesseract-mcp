@@ -208,3 +208,16 @@ def test_run_sync_claude_missing_prints_commands_exit_3(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 3
     assert "claude mcp add" in out          # printed for manual use
+
+
+def test_cli_check_against_fixture(tmp_path, monkeypatch, capsys):
+    from tesseract_mcp import mcp_sync
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    code = mcp_sync.main(["--check", "--manifest", str(manifest), "--config", str(config)])
+    assert code == 1
+    assert "MISSING : fetch" in capsys.readouterr().out
