@@ -105,3 +105,41 @@ def install_plugin(vault_root: Path, spec: PluginSpec, fetch=http_fetch) -> str:
     if styles is not None:
         (dest / "styles.css").write_bytes(styles)
     return "installed"
+
+
+def enable_plugins(vault_root: Path, ids: list[str]) -> list[str]:
+    """Merge ids into community-plugins.json. Never removes existing entries."""
+    cfg = Path(vault_root) / ".obsidian" / "community-plugins.json"
+    existing: list[str] = []
+    if cfg.is_file():
+        existing = json.loads(cfg.read_text(encoding="utf-8"))
+    added = [i for i in ids if i not in existing]
+    if added:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps(existing + added, indent=2), encoding="utf-8")
+    return added
+
+
+def apply_overlays(vault_root: Path) -> list[str]:
+    """Copy settings templates into the vault — only where nothing exists yet."""
+    vault_root = Path(vault_root)
+    applied: list[str] = []
+    settings_dir = TEMPLATE_DIR / "settings"
+    if not settings_dir.is_dir():
+        return applied
+    for src in sorted(settings_dir.glob("*/data.json")):
+        plugin_id = src.parent.name
+        dest = vault_root / ".obsidian" / "plugins" / plugin_id / "data.json"
+        if dest.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        applied.append(f"{plugin_id}/data.json")
+    smart_env_src = settings_dir / "smart-env" / "smart_env.json"
+    if smart_env_src.is_file():
+        dest = vault_root / ".smart-env" / "smart_env.json"
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(smart_env_src.read_text(encoding="utf-8"), encoding="utf-8")
+            applied.append(".smart-env/smart_env.json")
+    return applied

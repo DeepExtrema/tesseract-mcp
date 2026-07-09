@@ -6,6 +6,8 @@ from tesseract_mcp.provision import (
     PluginSpec,
     ProvisionError,
     TEMPLATE_DIR,
+    apply_overlays,
+    enable_plugins,
     install_plugin,
     installed_version,
     load_plugin_manifest,
@@ -110,3 +112,43 @@ def test_installed_version_reads_manifest(tmp_path):
     fetch = make_fetcher(good_assets())
     install_plugin(tmp_path, SPEC, fetch)
     assert installed_version(tmp_path, "dataview") == "0.5.68"
+
+
+def test_enable_plugins_creates_and_merges(tmp_path):
+    added = enable_plugins(tmp_path, ["dataview", "omnisearch"])
+    assert added == ["dataview", "omnisearch"]
+    cfg = tmp_path / ".obsidian" / "community-plugins.json"
+    assert json.loads(cfg.read_text(encoding="utf-8")) == ["dataview", "omnisearch"]
+
+
+def test_enable_plugins_preserves_user_entries(tmp_path):
+    cfg = tmp_path / ".obsidian" / "community-plugins.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps(["users-own-plugin", "dataview"]), encoding="utf-8")
+    added = enable_plugins(tmp_path, ["dataview", "omnisearch"])
+    assert added == ["omnisearch"]
+    result = json.loads(cfg.read_text(encoding="utf-8"))
+    assert result == ["users-own-plugin", "dataview", "omnisearch"]
+
+
+def test_apply_overlays_writes_smart_env_when_absent(tmp_path):
+    applied = apply_overlays(tmp_path)
+    assert ".smart-env/smart_env.json" in applied
+    written = json.loads(
+        (tmp_path / ".smart-env" / "smart_env.json").read_text(encoding="utf-8")
+    )
+    assert (
+        written["smart_sources"]["embed_model"]["transformers"]["model_key"]
+        == "TaylorAI/bge-micro-v2"
+    )
+
+
+def test_apply_overlays_never_clobbers_existing(tmp_path):
+    env_dir = tmp_path / ".smart-env"
+    env_dir.mkdir()
+    (env_dir / "smart_env.json").write_text('{"user": "tweaked"}', encoding="utf-8")
+    applied = apply_overlays(tmp_path)
+    assert ".smart-env/smart_env.json" not in applied
+    assert json.loads(
+        (env_dir / "smart_env.json").read_text(encoding="utf-8")
+    ) == {"user": "tweaked"}
