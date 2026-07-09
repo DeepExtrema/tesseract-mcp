@@ -1,0 +1,12 @@
+[
+  {"id": "smart-connections", "repo": "brianpetro/obsidian-smart-connections", "version": "4.5.3"},
+  {"id": "obsidian-tasks-plugin", "repo": "obsidian-tasks-group/obsidian-tasks", "version": "8.2.2"},
+  {"id": "obsidian-livesync", "repo": "vrtmrz/obsidian-livesync", "version": "0.25.79"},
+  {"id": "text-extractor", "repo": "scambier/obsidian-text-extractor", "version": "0.7.0"},
+  {"id": "dataview", "repo": "blacksmithgu/obsidian-dataview", "version": "0.5.68"},
+  {"id": "omnisearch", "repo": "scambier/obsidian-omnisearch", "version": "1.29.3"},
+  {"id": "tag-wrangler", "repo": "pjeby/tag-wrangler", "version": "0.6.4"},
+  {"id": "obsidian-kanban", "repo": "mgmeyers/obsidian-kanban", "version": "2.0.51"},
+  {"id": "table-editor-obsidian", "repo": "tgrosinger/advanced-tables-obsidian", "version": "0.23.2"},
+  {"id": "obsidian-importer", "repo": "obsidianmd/obsidian-importer", "version": "1.8.12"}
+]

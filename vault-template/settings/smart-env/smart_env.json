@@ -1,0 +1,15 @@
+{
+  "is_obsidian_vault": true,
+  "smart_sources": {
+    "min_chars": 200,
+    "embed_model": {
+      "adapter": "transformers",
+      "transformers": {
+        "model_key": "TaylorAI/bge-micro-v2"
+      }
+    }
+  },
+  "models": {
+    "embedding_platform": "transformers"
+  }
+}
