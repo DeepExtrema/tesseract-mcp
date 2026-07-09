@@ -3,7 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from tesseract_mcp.mcp_sync import MissingVaultError, ServerSpec, load_manifest, resolve
+from tesseract_mcp.mcp_sync import (
+    Classification,
+    ConfigParseError,
+    MissingVaultError,
+    ServerSpec,
+    classify,
+    load_manifest,
+    read_config,
+    resolve,
+)
 
 
 def _write_manifest(tmp_path: Path, servers: list[dict]) -> Path:
@@ -54,3 +63,49 @@ def test_resolve_no_vault_needed_passes_without_vault():
     )
     out = resolve(spec, repo_root=Path("C:/repo"), vault=None)
     assert out.args == ["mcp-server-fetch@2026.6.4"]
+
+
+def _spec(name="fetch", command="uvx", args=None, env=None):
+    return ServerSpec(name=name, transport="stdio", command=command, url=None,
+                      args=args or ["mcp-server-fetch@2026.6.4"], env=env or {}, why="")
+
+
+def test_read_config_missing_file_is_empty(tmp_path):
+    assert read_config(tmp_path / "nope.json") == {}
+
+
+def test_read_config_invalid_json_raises(tmp_path):
+    p = tmp_path / "claude.json"
+    p.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ConfigParseError):
+        read_config(p)
+
+
+def test_classify_missing_and_present_and_extra(tmp_path):
+    config = {
+        "fetch": {"type": "stdio", "command": "uvx",
+                  "args": ["mcp-server-fetch@2026.6.4"], "env": {}},
+        "somethingelse": {"type": "stdio", "command": "x", "args": [], "env": {}},
+    }
+    result = classify([_spec("fetch"), _spec("arxiv", args=["arxiv-mcp-server@0.4.12"])], config)
+    assert result.present == ["fetch"]
+    assert [s.name for s in result.missing] == ["arxiv"]
+    assert result.extras == ["somethingelse"]
+    assert result.drifted == []
+
+
+def test_classify_drift_on_args():
+    config = {"fetch": {"type": "stdio", "command": "uvx",
+                        "args": ["mcp-server-fetch@1.0.0"], "env": {}}}
+    result = classify([_spec("fetch")], config)
+    assert result.present == []
+    assert result.drifted[0][0] == "fetch"
+    assert "args" in result.drifted[0][1]
+
+
+def test_classify_extra_config_env_is_not_drift():
+    config = {"fetch": {"type": "stdio", "command": "uvx",
+                        "args": ["mcp-server-fetch@2026.6.4"],
+                        "env": {"PYTHONIOENCODING": "utf-8", "UNRELATED": "1"}}}
+    result = classify([_spec("fetch", env={"PYTHONIOENCODING": "utf-8"})], config)
+    assert result.present == ["fetch"]
