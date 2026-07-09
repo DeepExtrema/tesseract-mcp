@@ -38,10 +38,11 @@ _NOTE_SEED = (
 
 
 def discover_taxonomy(vault: Vault) -> list[str]:
-    """Existing top-level folders = the frozen taxonomy."""
+    """Existing top-level folders = the frozen taxonomy. All dot-directories
+    are config/tooling (e.g. .claude slash commands), never topical."""
     return sorted(
         p.name for p in vault.root.iterdir()
-        if p.is_dir() and p.name not in EXCLUDED_DIRS
+        if p.is_dir() and p.name not in EXCLUDED_DIRS and not p.name.startswith(".")
     )
 
 
