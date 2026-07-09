@@ -1,93 +1,111 @@
 # tesseract-mcp
 
-MCP server exposing the Tesseract Obsidian vault ("the mind database") to
-Claude. Operates directly on the vault filesystem; Self-hosted LiveSync
-replicates changes to all machines via CouchDB.
+**A persistent, shared mind for AI agents, built on an Obsidian vault.**
 
-## Install
+Every Claude session — on any machine — reads from and writes to the same
+knowledge base: a plain-markdown Obsidian vault replicated by Self-hosted
+LiveSync (CouchDB). This MCP server is how agents search it, extend it, and
+keep it organized.
 
-    python -m venv .venv
-    .venv\Scripts\pip install -e .
+<!-- SCREENSHOT: hero-graph -->
 
-## Provision a new vault
+## How it works
 
-    python -m tesseract_mcp.provision C:\Path\To\NewVault
+```mermaid
+flowchart LR
+    subgraph Agent side
+        C[Claude or any MCP client]
+    end
+    C <-->|MCP tools| S[tesseract-mcp server]
+    S <-->|read/write markdown| V[(Obsidian vault)]
+    S <-->|rebuildable caches| Q[(SQLite + embeddings in ~/.tesseract-mcp/)]
+    V <-->|LiveSync| DB[(CouchDB)]
+    DB <-->|LiveSync| M2[Vault on other machines]
+```
 
-Installs the curated plugin set (pinned in `vault-template/plugins.json`),
-enables them, seeds Smart Connections settings (embed model pinned to the
-one `sc_adapter` reads), and installs the Claude/ conventions tree. Then:
-open the vault once in Obsidian and turn off Restricted Mode, complete
-LiveSync via Setup-URI, and run `index_brain`.
+The vault's markdown is the single source of truth. Everything the server
+computes — the search index, embeddings, the graph cache — lives under
+`~/.tesseract-mcp/` and is rebuildable from the vault on demand, so it never
+has to travel through LiveSync itself.
 
-    python -m tesseract_mcp.provision C:\Path\To\Vault --check
+## What's inside
 
-reports pinned vs installed versions (ok / drift / missing). Upgrading a
-plugin = bump its pin in `vault-template/plugins.json`, re-run provision.
+### Hybrid search
+BM25 keyword ranking and embedding cosine similarity, fused with Reciprocal
+Rank Fusion — rank-based fusion means the two score spaces never need to be
+normalized against each other. Vectors reuse Obsidian's Smart Connections
+embeddings when fresh, with a same-model local fallback (bge-micro-v2) so the
+similarity space is never mixed.
 
-## Autonomous organizer
+### A semantic knowledge graph (GraphRAG)
+An LLM pass extracts people, organizations, domains, topics, projects and
+sources from notes into real markdown entity notes under `Claude/Graph/` —
+visible in Obsidian's graph, synced like everything else, and mirrored into
+SQLite for traversal. `related_notes` walks entity chains between notes;
+`context_bundle` composes hybrid search and graph context in one call.
 
-    python -m tesseract_mcp.organize C:\Vaults\Tesseract --dry-run   # ALWAYS first
-    python -m tesseract_mcp.organize C:\Vaults\Tesseract             # scheduled sweep
+### A write contract agents can't break
+Agents write freely only under `Claude/` (sessions, concepts, inbox, tasks,
+decisions, graph). Everything else is the human's: readable always, writable
+only with explicit confirmation — enforced in code, not by convention. The
+human-readable rules live in the vault as a constitution.
 
-Files notes into the existing top-level folders by embedding neighbor vote
-(share ≥ 0.7 moves; below queues a proposal in `Claude/Organizer.md`).
-Every move is journaled and reversible (`undo_move` tool). The FIRST run
-against a real vault must be --dry-run and human-reviewed. MCP tools:
-`organize_vault(apply?)` (dry-run default) and `undo_move(path)`.
+### An autonomous organizer
+New notes are filed into the existing folder taxonomy by embedding
+neighbor-vote (≥0.7 agreement moves the note; less queues a human proposal).
+Every move is journaled and reversible.
 
-## Register with Claude Code
-
-    claude mcp add --scope user tesseract `
-      -e TESSERACT_VAULT_PATH=C:\Vaults\Tesseract `
-      -- C:\Users\Taimoor\Documents\GitHub\tesseract-mcp\.venv\Scripts\tesseract-mcp.exe
+### One-command vault provisioning
+`python -m tesseract_mcp.provision <path-to-vault>` installs a pinned plugin
+set, seeds settings (embed model pinned to what the search stack reads), and
+installs the agent conventions tree. `--check` reports version drift.
 
 ## Tools
 
-| Tool | Purpose |
-|---|---|
-| `onboard` | Call first in a new session — constitution, routing, cheat-sheet, graph status |
-| `search_brain` | Hybrid search (BM25 + vector, fused) — optional tag/folder filters |
-| `context_bundle` | One call: hybrid search hits + their graph entities + related notes |
-| `read_note` | Read any note |
-| `log_session` | Session log into `Claude/Sessions/` + index update |
-| `capture` | Quick thought into `Claude/Inbox/` |
-| `upsert_concept` | Evergreen notes in `Claude/Concepts/` |
-| `write_note` | General write — quarantined to `Claude/` unless explicitly confirmed |
-| `add_task` | Add a checkbox task to `Claude/Tasks.md` in Obsidian Tasks-plugin format, optional due date |
-| `list_tasks` | List checkbox tasks across the vault (open only by default) |
-| `query_notes` | Query notes by frontmatter metadata (Dataview-style) |
-| `get_backlinks` | List notes whose `[[wikilinks]]` point at a given note |
-| `list_recent` | Most recently modified notes, newest first |
-| `index_brain` | Extract entities from new/changed notes into the semantic graph |
-| `find_entity` | Look up graph entities (people, orgs, domains, topics…) by name/alias |
-| `related_notes` | GraphRAG: notes connected via shared entities, with the connecting chain |
-| `graph_stats` | Entity/edge/mention counts for the graph |
-| `consolidate_graph` | Merge duplicate graph entities (dry-run by default) |
+| | Tool | Purpose |
+|---|---|---|
+| **Orient** | `onboard` | Call first in a new session — constitution, routing, cheat-sheet, graph status |
+| **Retrieve** | `search_brain` | Hybrid search (BM25 + vector, RRF-fused), optional tag/folder filters |
+| | `context_bundle` | One call: search hits + their graph entities + related notes |
+| | `read_note` | Read any note |
+| | `query_notes` | Query notes by frontmatter metadata |
+| | `get_backlinks` | Notes whose `[[wikilinks]]` point at a note |
+| | `list_recent` | Recently modified notes |
+| | `list_tasks` | Checkbox tasks across the vault |
+| **Write** | `log_session` | Session log into `Claude/Sessions/` |
+| | `capture` | Quick thought into `Claude/Inbox/` |
+| | `upsert_concept` | Evergreen notes in `Claude/Concepts/` |
+| | `write_note` | General write — quarantined to `Claude/` unless confirmed |
+| | `add_task` | Checkbox task in `Claude/Tasks.md` (Obsidian Tasks format) |
+| **Graph** | `index_brain` | Extract entities from new/changed notes |
+| | `find_entity` | Look up entities by name/alias |
+| | `related_notes` | GraphRAG: notes connected via shared entities, with the chain |
+| | `graph_stats` | Entity/edge/mention counts |
+| | `consolidate_graph` | Merge duplicate entities (dry-run default) |
+| **Organize** | `organize_vault` | Autonomous filing sweep (dry-run default) |
+| | `undo_move` | Revert a journaled move |
 
-## The contract
+## Quickstart
 
-Agents write proactively **only inside `Claude/`**. Everything else is
-read-only unless the user explicitly asks. The quarantine is enforced in
-code (`vault.py`), and the human-readable rules live in the vault at
-`Claude/README.md`.
-Connecting clients receive orientation via MCP `instructions`; call `onboard` for the full guide.
+```powershell
+git clone <repo> ; cd tesseract-mcp
+python -m venv .venv
+.venv\Scripts\pip install -e .
 
-## The semantic graph
+# Provision a fresh vault (plugins, settings, conventions)
+python -m tesseract_mcp.provision <path-to-vault>
 
-`Claude/Graph/` holds LLM-extracted entity notes (People/, Organizations/,
-Domains/, Topics/, Projects/, Sources/) whose wikilinks connect source notes
-into a typed knowledge graph — visible in Obsidian, synced by LiveSync,
-queried through a rebuildable SQLite cache in `~/.tesseract-mcp/`. Index on
-demand with the `index_brain` tool or `python -m tesseract_mcp.indexer
-<vault>` (extraction backend: TESSERACT_EXTRACTOR=codex|claude).
+# Register with Claude Code
+claude mcp add --scope user tesseract `
+  -e TESSERACT_VAULT_PATH=<path-to-vault> `
+  -- <repo>\.venv\Scripts\tesseract-mcp.exe
+```
 
-**Scheduled sweep:** to keep the graph fresh automatically, point Windows Task
-Scheduler (or a Claude Code scheduled agent) at
-`python -m tesseract_mcp.indexer C:\Vaults\Tesseract --backend codex` on a
-nightly cadence. It only processes new/changed notes, so repeat runs are cheap.
+Then open the vault once in Obsidian (disable Restricted Mode, complete
+LiveSync setup) and run the `index_brain` tool.
 
-To merge duplicate entities (name variants of the same thing), run
-`python -m tesseract_mcp.consolidate <vault> [--apply]` — dry-run by default;
-pass `--apply` to merge into canonical entities.
+## Going deeper
 
-Server infrastructure (CouchDB + Caddy for LiveSync) lives in `server/`.
+- [Architecture deep dive](docs/ARCHITECTURE.md) — retrieval pipeline,
+  graph design, module map.
+- [Server deployment](server/DEPLOY.md) — CouchDB + Caddy for LiveSync.
