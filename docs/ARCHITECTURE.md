@@ -52,6 +52,8 @@ flowchart TB
     server --> vault
     hybrid --> vault
     graphmod --> vault
+    provision --> conventions
+    organize --> organizer
     organizer --> mover --> vault
 ```
 
@@ -105,12 +107,17 @@ fuses them:
   because embedding vectors from two different models live in unrelated
   vector spaces — mixing them into one similarity ranking would silently
   corrupt it.
-- **Freshness is precomputed, not checked at query time.** Embedding
-  freshness (Smart Connections vs. fallback, and which fallback entries are
-  stale) is resolved once, during incremental indexing (`indexer.run`, see
-  §3), not on every search call. `search_brain` and `context_bundle` simply
-  read whatever vectors are already cached, so a search never blocks on
-  re-embedding or staleness checks.
+- **Indexing keeps the cache warm; search isn't fully exempt.**
+  `indexer.run` calls the same `embeddings.get_note_vectors` function that
+  `hybrid_search` calls, right after each incremental indexing pass — so
+  immediately after an `index_brain` run, every note's vector is already
+  cached and a search usually just reads it back. But `get_note_vectors` is
+  not purely read-only: for any note edited *since* the last indexing pass
+  (whose Smart Connections vector also isn't fresh), the fallback-cache
+  content hash no longer matches, and `search_brain` / `context_bundle`
+  will synchronously call the embedder inline for that note before ranking
+  proceeds. In practice, only notes changed since the last `index_brain`
+  run pay this cost — everything else is served from cache.
 
 ## 3. The semantic graph
 
@@ -196,9 +203,12 @@ the vault's top-level folders.
   already-organized note's embedding; the top-K (K=10) most similar notes
   vote for their own top-level folder, weighted by cosine similarity. If the
   winning folder's share of that vote is **≥ 0.7**, the note moves there
-  automatically. Below that threshold, the move is queued instead as a
-  proposal, written into `Claude/Organizer.md` for a human to review and act
-  on manually.
+  automatically. Below that threshold, what happens depends on where the
+  note already sits: an unfiled, vault-root note is queued as a proposal in
+  `Claude/Organizer.md` for a human to review and act on manually, while a
+  note that's already filed inside a taxonomy folder is left exactly where
+  it is — a low-confidence disagreement about an already-filed note is
+  silently skipped rather than surfaced as a proposal.
 - **Safe moves.** Applying a move is delegated to `mover.py`, which rewrites
   every path-qualified `[[wikilink]]` that pointed at the note's old
   location (bare `[[Stem]]` links are untouched, since the organizer refuses
