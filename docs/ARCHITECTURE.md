@@ -128,7 +128,7 @@ writes them under `Claude/Graph/`, split by type into `People/`,
 Obsidian's own graph view, sync to every machine via LiveSync exactly like
 the rest of the vault, and can be hand-edited without breaking anything.
 
-<!-- SCREENSHOT: entity-note -->
+![An extracted entity note with typed wikilinks](assets/entity-note.png)
 
 Alongside the markdown, a SQLite database (`graph.db`, under
 `~/.tesseract-mcp/`) mirrors the same information for fast traversal

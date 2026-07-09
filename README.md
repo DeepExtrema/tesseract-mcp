@@ -7,7 +7,7 @@ knowledge base: a plain-markdown Obsidian vault replicated by Self-hosted
 LiveSync (CouchDB). This MCP server is how agents search it, extend it, and
 keep it organized.
 
-<!-- SCREENSHOT: hero-graph -->
+![The vault's semantic graph in Obsidian](docs/assets/hero-graph.png)
 
 ## How it works
 
