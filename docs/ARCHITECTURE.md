@@ -25,15 +25,15 @@ flowchart TB
     subgraph "Graph"
         indexer[indexer.py — incremental index]
         extractor[extractor.py — codex/claude backends]
-        graphmod[graph.py — traversal]
-        gstore[graphstore.py — SQLite mirror]
+        cache[cache.py — SQLite mirror, GraphRAG traversal]
+        gstore[graphstore.py — entity notes under Claude/Graph]
         consolidate[consolidate.py — dedupe]
     end
     subgraph "Vault IO"
         vault[vault.py — quarantine enforcement]
         notes[notes.py]
         tasks[tasks.py]
-        cache[cache.py]
+        graphmod[graph.py — backlinks, frontmatter, recent]
     end
     subgraph "Provision and organize"
         provision[provision.py]
@@ -44,10 +44,14 @@ flowchart TB
     end
     server --> hybrid --> bm25 & emb & search
     emb --> sca
-    server --> graphmod --> gstore
+    server --> cache --> gstore
+    server --> graphmod
     server --> indexer --> extractor & gstore
+    indexer --> cache
+    consolidate --> cache & gstore & extractor
     server --> vault
     hybrid --> vault
+    graphmod --> vault
     organizer --> mover --> vault
 ```
 
@@ -178,12 +182,16 @@ so a fresh agent session can orient itself before writing anything.
 the vault's top-level folders.
 
 - **Taxonomy discovery.** The taxonomy isn't hard-coded: `discover_taxonomy`
-  just lists the vault's existing top-level directories. Two categories are
-  hard-excluded regardless of what's discovered: any dot-directory (config
-  and tooling, e.g. `.obsidian`, `.smart-env`) and a fixed set of
-  vault-root agent guide files (`CLAUDE.md`, `AGENTS.md`, `README.md`) that
-  Claude and Codex read directly from the vault root and must never be
-  moved.
+  just lists the vault's existing top-level directories, minus three
+  hard-excluded categories. First, a fixed set of named directories that are
+  never topical: `Claude` (agent-owned, out of the organizer's scope
+  entirely), `00 - Maps of Content` (Obsidian's map-of-content convention),
+  and infrastructure/tooling dirs `.obsidian`, `.smart-env`, `.trash`,
+  `.space`, and `copilot` (`organizer.EXCLUDED_DIRS`). Second, a catch-all:
+  *any* other directory starting with `.` is treated as config/tooling and
+  excluded regardless of name. Third, a fixed set of vault-root agent guide
+  files (`CLAUDE.md`, `AGENTS.md`, `README.md`) that Claude and Codex read
+  directly from the vault root and must never be moved.
 - **The vote.** Each candidate note's embedding is compared against every
   already-organized note's embedding; the top-K (K=10) most similar notes
   vote for their own top-level folder, weighted by cosine similarity. If the
