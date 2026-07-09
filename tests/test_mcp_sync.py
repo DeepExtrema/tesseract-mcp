@@ -83,6 +83,16 @@ def test_read_config_invalid_json_raises(tmp_path):
         read_config(p)
 
 
+def test_read_config_non_object_structure_raises(tmp_path):
+    p = tmp_path / "claude.json"
+    p.write_text(json.dumps({"mcpServers": []}), encoding="utf-8")
+    with pytest.raises(ConfigParseError):
+        read_config(p)
+    p.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+    with pytest.raises(ConfigParseError):
+        read_config(p)
+
+
 def test_classify_missing_and_present_and_extra(tmp_path):
     config = {
         "fetch": {"type": "stdio", "command": "uvx",
@@ -135,9 +145,31 @@ def test_run_sync_registers_only_missing(tmp_path, capsys):
         class R: returncode = 0
         return R()
 
-    code = run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    code = run_sync(manifest, config, tmp_path, None, check_only=False,
+                    runner=fake_runner, which=lambda n: n)
     assert code == 0
     assert len(calls) == 1 and calls[0][:3] == ["claude", "mcp", "add"]
+
+
+def test_run_sync_uses_resolved_claude_path(tmp_path):
+    """Windows npm shims (claude.cmd) need the full path from which()."""
+    manifest = _write_manifest(tmp_path, [
+        {"name": "fetch", "transport": "stdio", "command": "uvx",
+         "args": ["mcp-server-fetch@2026.6.4"], "env": {}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    calls = []
+
+    def fake_runner(argv, **kw):
+        calls.append(argv)
+        class R: returncode = 0
+        return R()
+
+    run_sync(manifest, config, tmp_path, None, check_only=False,
+             runner=fake_runner, which=lambda n: r"C:\nodejs\claude.cmd")
+    assert calls[0][0] == r"C:\nodejs\claude.cmd"
+    assert calls[0][1:3] == ["mcp", "add"]
 
 
 def test_run_sync_never_touches_existing_entries(tmp_path):
@@ -158,7 +190,8 @@ def test_run_sync_never_touches_existing_entries(tmp_path):
         class R: returncode = 0
         return R()
 
-    run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    run_sync(manifest, config, tmp_path, None, check_only=False,
+             runner=fake_runner, which=lambda n: n)
     assert calls == []                       # drifted -> reported, never re-registered
     assert config.read_text(encoding="utf-8") == original
 
@@ -201,12 +234,17 @@ def test_run_sync_claude_missing_prints_commands_exit_3(tmp_path, capsys):
     config = tmp_path / "claude.json"
     config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
 
+    calls = []
+
     def fake_runner(argv, **kw):
+        calls.append(argv)
         raise FileNotFoundError("claude not found")
 
-    code = run_sync(manifest, config, tmp_path, None, check_only=False, runner=fake_runner)
+    code = run_sync(manifest, config, tmp_path, None, check_only=False,
+                    runner=fake_runner, which=lambda n: None)
     out = capsys.readouterr().out
     assert code == 3
+    assert calls == []                      # which() said absent -> no subprocess attempt
     assert "claude mcp add" in out          # printed for manual use
 
 

@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -88,6 +89,8 @@ def read_config(config_path: Path) -> dict[str, dict]:
         data = json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ConfigParseError(f"cannot parse {p}: {e}") from e
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        raise ConfigParseError(f"unexpected structure in {p}: mcpServers must be an object")
     return data.get("mcpServers", {})
 
 
@@ -143,7 +146,7 @@ def _remediation(name: str) -> str:
 
 def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
              vault: str | None, check_only: bool,
-             runner=subprocess.run) -> int:
+             runner=subprocess.run, which=shutil.which) -> int:
     try:
         config_servers = read_config(config_path)
     except ConfigParseError as e:
@@ -168,12 +171,23 @@ def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
     if check_only:
         return 1 if (result.missing or result.drifted) else 0
 
+    # Windows: subprocess.run without shell=True resolves only .exe, so an
+    # npm-shim claude.cmd needs the full path from which().
+    claude_exe = which("claude")
+    if result.missing and claude_exe is None:
+        for spec in result.missing:
+            argv = build_add_command(spec)
+            print(f"register: {' '.join(shlex.quote(a) for a in argv)}")
+        print("claude CLI not found on PATH. Run the printed command(s) "
+              "manually, or install Claude Code. Nothing was registered.")
+        return 3
+
     failures = 0
     for spec in result.missing:
         argv = build_add_command(spec)
         print(f"register: {' '.join(shlex.quote(a) for a in argv)}")
         try:
-            proc = runner(argv, check=False)
+            proc = runner([claude_exe] + argv[1:], check=False)
         except FileNotFoundError:
             print("claude CLI not found on PATH. Run the printed command(s) "
                   "manually, or install Claude Code. Nothing was registered.")
