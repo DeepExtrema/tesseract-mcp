@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, organizer as organizer_mod, tasks as tasks_mod
 from .embeddings import SentenceTransformerEmbedder
 from .extractor import CliExtractor
 from .vault import Vault, VaultError
@@ -105,6 +105,24 @@ def context_bundle(query: str, hops: int = 2, limit: int = 10) -> dict:
         entities.extend(f for f in found if f["path"][:-3] == entity_path)
 
     return {"hits": result_hits, "entities": entities, "related_notes": related}
+
+
+@mcp.tool()
+def organize_vault(apply: bool = False) -> dict:
+    """Neighbor-vote sweep of the vault's topical folders. Dry-run by
+    default: returns {moved, proposals, skipped} without touching files.
+    apply=True executes moves (journaled to Claude/Organizer.md; reversible
+    via undo_move). The scheduled CLI sweep is the autonomous path — see
+    constitution → Organizer."""
+    return organizer_mod.run_sweep(get_vault(), _get_embedder(), apply=apply)
+
+
+@mcp.tool()
+def undo_move(path: str) -> dict:
+    """Reverse the organizer's most recent move of the given note (current
+    vault-relative path). Restores the file, its inbound links, and the
+    index manifest entry."""
+    return organizer_mod.undo_move(get_vault(), path)
 
 
 @mcp.tool()
@@ -224,6 +242,7 @@ def onboard() -> dict:
         "find_entity(query, type?) / related_notes(path, hops?) / graph_stats()",
         "context_bundle(query, hops?, limit?) — one call: hybrid hits + entities + related notes",
         "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
+        "organize_vault(apply?) / undo_move(path) — neighbor-vote filing; dry-run default",
     ]
     db = indexer.db_path(get_vault().root)
     if db.exists():

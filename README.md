@@ -24,6 +24,17 @@ LiveSync via Setup-URI, and run `index_brain`.
 reports pinned vs installed versions (ok / drift / missing). Upgrading a
 plugin = bump its pin in `vault-template/plugins.json`, re-run provision.
 
+## Autonomous organizer
+
+    python -m tesseract_mcp.organize C:\Vaults\Tesseract --dry-run   # ALWAYS first
+    python -m tesseract_mcp.organize C:\Vaults\Tesseract             # scheduled sweep
+
+Files notes into the existing top-level folders by embedding neighbor vote
+(share ≥ 0.7 moves; below queues a proposal in `Claude/Organizer.md`).
+Every move is journaled and reversible (`undo_move` tool). The FIRST run
+against a real vault must be --dry-run and human-reviewed. MCP tools:
+`organize_vault(apply?)` (dry-run default) and `undo_move(path)`.
+
 ## Register with Claude Code
 
     claude mcp add --scope user tesseract `

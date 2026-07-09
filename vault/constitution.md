@@ -65,3 +65,16 @@ Rules for every AI agent writing to this vault. Read this before writing.
 - Never resolve LiveSync conflicts by deleting someone else's content.
 - When extending an existing note, append; don't reorder or rewrite what a
   human wrote.
+
+## Organizer
+
+Standing permission (granted by Taimoor, 2026-07-08): the organizer may
+move notes within the human topical tree autonomously — vault-root notes
+and misfiled notes in topical folders — filing each where its semantic
+neighbors live (K=10 cosine vote, share ≥ 0.7). It NEVER touches Claude/,
+00 - Maps of Content, dotfolders, non-markdown files, or notes with
+`organize: false` frontmatter; it never creates or renames folders; on any
+duplicate filename stem it proposes instead of moving. Every move is
+journaled to Claude/Organizer.md and reversible via the undo_move tool.
+Low-confidence classifications queue as proposals in the same note —
+resolving them teaches future votes.
