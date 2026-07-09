@@ -25,6 +25,9 @@ EXCLUDED_DIRS = frozenset({
     "Claude", "00 - Maps of Content", ".obsidian", ".smart-env",
     ".trash", ".space", "copilot",
 })
+# vault-root agent guides installed by conventions.install(); Claudian and
+# Codex read these from the root — the organizer must never relocate them
+EXCLUDED_ROOT_FILES = frozenset({"CLAUDE.md", "AGENTS.md", "README.md"})
 VOTE_K = 10
 VOTE_THRESHOLD = 0.7
 ORGANIZER_NOTE = "Claude/Organizer.md"
@@ -61,7 +64,7 @@ def iter_candidates(vault: Vault) -> list[str]:
     already-organized notes (re-checkable), minus organize: false."""
     root_notes = sorted(
         p.name for p in vault.root.iterdir()
-        if p.is_file() and p.suffix == ".md"
+        if p.is_file() and p.suffix == ".md" and p.name not in EXCLUDED_ROOT_FILES
     )
     return [
         rel for rel in root_notes + iter_organized(vault)

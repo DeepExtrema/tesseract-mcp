@@ -213,3 +213,18 @@ def test_sweep_duplicate_stem_becomes_proposal(org_vault):
     assert "Loose Space Note.md" in props
     assert "duplicate" in props["Loose Space Note.md"]["reason"]
     assert (org_vault.root / "Loose Space Note.md").is_file()  # not moved
+
+
+def test_root_agent_guides_are_never_candidates(org_vault):
+    (org_vault.root / "CLAUDE.md").write_text(
+        "space vault guide for agents\n", encoding="utf-8")
+    (org_vault.root / "AGENTS.md").write_text(
+        "space agent instructions\n", encoding="utf-8")
+    candidates = iter_candidates(org_vault)
+    assert "CLAUDE.md" not in candidates
+    assert "AGENTS.md" not in candidates
+    # and a full sweep never proposes or moves them either
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=True)
+    touched = [m["from"] for m in report["moved"]] + [p["path"] for p in report["proposals"]]
+    assert "CLAUDE.md" not in touched and "AGENTS.md" not in touched
+    assert (org_vault.root / "CLAUDE.md").is_file()
