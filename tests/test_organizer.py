@@ -5,6 +5,8 @@ import pytest
 from tesseract_mcp.organizer import (
     VOTE_K,
     VOTE_THRESHOLD,
+    Classification,
+    classify,
     discover_taxonomy,
     iter_candidates,
     iter_organized,
@@ -68,3 +70,44 @@ def test_iter_candidates_root_and_organized_minus_pinned(org_vault):
     assert "02 - Space/NASA JPL.md" in candidates       # filed notes are re-checkable
     assert "Pinned.md" not in candidates                # organize: false
     assert "Claude/Inbox/capture.md" not in candidates  # excluded dir
+
+
+SPACE = [1.0, 0.0]
+COOK = [0.0, 1.0]
+MIXED = [0.7, 0.7]
+
+LABELED_VECS = {
+    "02 - Space/NASA JPL.md": SPACE,
+    "02 - Space/SmallSat.md": SPACE,
+    "02 - Space/Telemanom.md": SPACE,
+    "05 - Cooking/Sourdough.md": COOK,
+    "05 - Cooking/Ramen.md": COOK,
+}
+LABELED = list(LABELED_VECS)
+
+
+def test_classify_clear_majority():
+    vectors = {**LABELED_VECS, "Loose Space Note.md": [0.9, 0.1]}
+    got = classify("Loose Space Note.md", vectors, LABELED)
+    assert got.folder == "02 - Space"
+    assert got.share >= 0.7
+    assert "02 - Space/NASA JPL.md" in got.neighbors
+
+
+def test_classify_split_vote_low_share():
+    vectors = {**LABELED_VECS, "Ambiguous.md": MIXED}
+    got = classify("Ambiguous.md", vectors, LABELED)
+    assert got.share < 0.7
+
+
+def test_classify_candidate_never_votes_for_itself():
+    vectors = {**LABELED_VECS, "02 - Space/NASA JPL.md": SPACE}
+    got = classify("02 - Space/NASA JPL.md", vectors, LABELED)
+    assert "02 - Space/NASA JPL.md" not in got.neighbors
+
+
+def test_classify_no_vector_or_no_labeled_returns_none():
+    got = classify("Unknown.md", LABELED_VECS, LABELED)  # no vector for it
+    assert got.folder is None and got.share == 0.0
+    got2 = classify("X.md", {"X.md": SPACE}, [])          # nothing labeled
+    assert got2.folder is None

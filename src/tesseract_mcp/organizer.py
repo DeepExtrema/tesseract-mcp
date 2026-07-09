@@ -9,6 +9,8 @@ threshold, hard exclusions below.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .search import parse_frontmatter
 from .vault import Vault
 
@@ -53,3 +55,46 @@ def iter_candidates(vault: Vault) -> list[str]:
         rel for rel in root_notes + iter_organized(vault)
         if _wants_organizing(vault, rel)
     ]
+
+
+@dataclass
+class Classification:
+    folder: str | None
+    share: float
+    neighbors: list[str]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def classify(
+    rel: str,
+    vectors: dict[str, list[float]],
+    labeled: list[str],
+    k: int = VOTE_K,
+) -> Classification:
+    """Cosine-weighted K-nearest-neighbor vote among labeled notes.
+    share = winning folder's similarity mass / total mass of the top K."""
+    vec = vectors.get(rel)
+    if vec is None:
+        return Classification(None, 0.0, [])
+    scored = [
+        (other, _cosine(vec, vectors[other]))
+        for other in labeled
+        if other != rel and other in vectors
+    ]
+    scored = [(p, s) for p, s in scored if s > 0]
+    if not scored:
+        return Classification(None, 0.0, [])
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    top = scored[:k]
+    votes: dict[str, float] = {}
+    for path, sim in top:
+        votes[path.split("/")[0]] = votes.get(path.split("/")[0], 0.0) + sim
+    winner = max(votes, key=votes.get)
+    share = votes[winner] / sum(votes.values())
+    return Classification(winner, share, [p for p, _ in top])
