@@ -13,11 +13,14 @@ so tests never touch the network.
 
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from .conventions import install as install_conventions
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATE_DIR = REPO_ROOT / "vault-template"
@@ -143,3 +146,84 @@ def apply_overlays(vault_root: Path) -> list[str]:
             dest.write_text(smart_env_src.read_text(encoding="utf-8"), encoding="utf-8")
             applied.append(".smart-env/smart_env.json")
     return applied
+
+
+NEXT_STEPS = """
+Provisioning done. Remaining human steps:
+ 1. Open the vault in Obsidian once and turn OFF Restricted Mode
+    (Settings -> Community plugins) so the installed plugins load.
+ 2. Complete LiveSync setup via its Setup-URI flow — server URI and the
+    E2E passphrase live in your password manager, never in this repo.
+ 3. Register the vault with the MCP server (see README) and run the
+    index_brain tool to build the semantic graph.
+"""
+
+
+def provision(vault_root: str | Path, fetch=http_fetch) -> dict:
+    vault_root = Path(vault_root)
+    if not vault_root.is_dir():
+        raise ProvisionError(f"Vault root does not exist: {vault_root}")
+    (vault_root / ".obsidian").mkdir(exist_ok=True)
+
+    specs = load_plugin_manifest()
+    plugins: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    for spec in specs:
+        try:
+            plugins[spec.id] = install_plugin(vault_root, spec, fetch)
+        except ProvisionError as e:
+            errors[spec.id] = str(e)
+
+    enabled = enable_plugins(
+        vault_root, [s.id for s in specs if s.id not in errors]
+    )
+    overlays = apply_overlays(vault_root)
+    conventions = install_conventions(vault_root)
+    return {
+        "plugins": plugins,
+        "errors": errors,
+        "enabled": enabled,
+        "overlays": overlays,
+        "conventions": conventions,
+    }
+
+
+def check(vault_root: str | Path) -> dict:
+    vault_root = Path(vault_root)
+    report: dict[str, dict] = {}
+    for spec in load_plugin_manifest():
+        installed = installed_version(vault_root, spec.id)
+        if installed == spec.version:
+            status = "ok"
+        elif installed is None:
+            status = "missing"
+        else:
+            status = "drift"
+        report[spec.id] = {
+            "pinned": spec.version, "installed": installed, "status": status
+        }
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Provision an Obsidian vault as a Tesseract mind database."
+    )
+    parser.add_argument("vault", help="Path to the vault root")
+    parser.add_argument(
+        "--check", action="store_true",
+        help="Report pinned vs installed plugin versions without changing anything",
+    )
+    args = parser.parse_args()
+    if args.check:
+        print(json.dumps(check(args.vault), indent=2))
+        return
+    report = provision(args.vault)
+    print(json.dumps(report, indent=2))
+    if report["errors"]:
+        print("\nWARNING: some plugins failed — re-run after checking pins/network.")
+    print(NEXT_STEPS)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,5 @@
 import json
+import shutil
 
 import pytest
 
@@ -7,10 +8,12 @@ from tesseract_mcp.provision import (
     ProvisionError,
     TEMPLATE_DIR,
     apply_overlays,
+    check,
     enable_plugins,
     install_plugin,
     installed_version,
     load_plugin_manifest,
+    provision,
 )
 
 SPEC = PluginSpec("dataview", "blacksmithgu/obsidian-dataview", "0.5.68")
@@ -152,3 +155,66 @@ def test_apply_overlays_never_clobbers_existing(tmp_path):
     assert json.loads(
         (env_dir / "smart_env.json").read_text(encoding="utf-8")
     ) == {"user": "tweaked"}
+
+
+def all_good_assets():
+    assets = {}
+    for spec in load_plugin_manifest():
+        base = f"https://github.com/{spec.repo}/releases/download/{spec.version}"
+        manifest = json.dumps({"id": spec.id, "version": spec.version}).encode()
+        assets[f"{base}/manifest.json"] = manifest
+        assets[f"{base}/main.js"] = b"//js"
+        assets[f"{base}/styles.css"] = b"/*css*/"
+    return assets
+
+
+def test_provision_fresh_vault_end_to_end(tmp_path):
+    fetch = make_fetcher(all_good_assets())
+    report = provision(tmp_path, fetch)
+    assert report["errors"] == {}
+    assert set(report["plugins"]) == {s.id for s in load_plugin_manifest()}
+    assert all(v == "installed" for v in report["plugins"].values())
+    enabled = json.loads(
+        (tmp_path / ".obsidian" / "community-plugins.json").read_text(encoding="utf-8")
+    )
+    assert "smart-connections" in enabled
+    assert (tmp_path / ".smart-env" / "smart_env.json").is_file()
+    assert (tmp_path / "Claude" / "README.md").is_file()
+
+
+def test_provision_is_idempotent(tmp_path):
+    provision(tmp_path, make_fetcher(all_good_assets()))
+    fetch2 = make_fetcher(all_good_assets())
+    report = provision(tmp_path, fetch2)
+    assert all(v == "ok" for v in report["plugins"].values())
+    assert fetch2.calls == []
+    assert report["enabled"] == []
+
+
+def test_provision_isolates_one_bad_plugin(tmp_path):
+    assets = all_good_assets()
+    del assets["https://github.com/blacksmithgu/obsidian-dataview/releases/download/0.5.68/main.js"]
+    report = provision(tmp_path, make_fetcher(assets))
+    assert "dataview" in report["errors"]
+    assert "main.js" in report["errors"]["dataview"]
+    assert report["plugins"]["omnisearch"] == "installed"
+    enabled = json.loads(
+        (tmp_path / ".obsidian" / "community-plugins.json").read_text(encoding="utf-8")
+    )
+    assert "dataview" not in enabled
+
+
+def test_provision_rejects_missing_vault(tmp_path):
+    with pytest.raises(ProvisionError, match="does not exist"):
+        provision(tmp_path / "nope", make_fetcher({}))
+
+
+def test_check_reports_ok_drift_missing(tmp_path):
+    provision(tmp_path, make_fetcher(all_good_assets()))
+    mf = tmp_path / ".obsidian" / "plugins" / "dataview" / "manifest.json"
+    mf.write_text(json.dumps({"id": "dataview", "version": "0.0.1"}), encoding="utf-8")
+    shutil.rmtree(tmp_path / ".obsidian" / "plugins" / "omnisearch")
+    report = check(tmp_path)
+    assert report["dataview"]["status"] == "drift"
+    assert report["omnisearch"]["status"] == "missing"
+    assert report["smart-connections"]["status"] == "ok"
