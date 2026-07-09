@@ -14,6 +14,7 @@ from tesseract_mcp.organizer import (
     iter_organized,
     journal_path,
     record_move,
+    run_sweep,
     undo_move,
 )
 from tesseract_mcp.vault import Vault, VaultError
@@ -152,3 +153,63 @@ def test_undo_twice_raises(org_vault, moved):
 def test_undo_unknown_path_raises(org_vault):
     with pytest.raises(VaultError, match="No undoable move"):
         undo_move(org_vault, "02 - Space/Never Moved.md")
+
+
+class ClusterEmbedder:
+    """space→[1,0], recipe→[0,1], both/neither→[0.7,0.7]. Deterministic."""
+
+    def embed_batch(self, texts):
+        out = []
+        for t in texts:
+            low = t.lower()
+            has_space, has_recipe = "space" in low, "recipe" in low
+            if has_space and not has_recipe:
+                out.append([1.0, 0.0])
+            elif has_recipe and not has_space:
+                out.append([0.0, 1.0])
+            else:
+                out.append([0.7, 0.7])
+        return out
+
+
+def test_sweep_dry_run_reports_but_touches_nothing(org_vault):
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=False)
+    moves = {m["from"]: m["to_folder"] for m in report["moved"]}
+    assert moves.get("Loose Space Note.md") == "02 - Space"
+    assert (org_vault.root / "Loose Space Note.md").is_file()  # not actually moved
+    assert not journal_path(org_vault).exists()
+
+
+def test_sweep_apply_moves_and_journals(org_vault):
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=True)
+    assert any(m["from"] == "Loose Space Note.md" for m in report["moved"])
+    assert (org_vault.root / "02 - Space" / "Loose Space Note.md").is_file()
+    assert not (org_vault.root / "Loose Space Note.md").exists()
+    assert journal_path(org_vault).exists()
+    assert report["cache_rebuilt"] is True
+
+
+def test_sweep_correctly_filed_note_skipped(org_vault):
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=False)
+    moved_from = [m["from"] for m in report["moved"]]
+    assert "02 - Space/NASA JPL.md" not in moved_from  # already in the right place
+
+
+def test_sweep_ambiguous_note_becomes_proposal(org_vault):
+    (org_vault.root / "Fusion Cuisine In Space.md").write_text(
+        "space station recipe experiments\n", encoding="utf-8")  # mixed → [0.7, 0.7]
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=True)
+    props = [p["path"] for p in report["proposals"]]
+    assert "Fusion Cuisine In Space.md" in props
+    assert (org_vault.root / "Fusion Cuisine In Space.md").is_file()  # not moved
+    assert "Proposals" in org_vault.read(ORGANIZER_NOTE)
+
+
+def test_sweep_duplicate_stem_becomes_proposal(org_vault):
+    (org_vault.root / "05 - Cooking" / "Loose Space Note.md").write_text(
+        "recipe named confusingly\n", encoding="utf-8")
+    report = run_sweep(org_vault, ClusterEmbedder(), apply=True)
+    props = {p["path"]: p for p in report["proposals"]}
+    assert "Loose Space Note.md" in props
+    assert "duplicate" in props["Loose Space Note.md"]["reason"]
+    assert (org_vault.root / "Loose Space Note.md").is_file()  # not moved

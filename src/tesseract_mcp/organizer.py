@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import indexer
-from .mover import reverse_rewrites
+from . import cache, indexer
+from . import embeddings as embeddings_mod
+from .mover import duplicate_stem_exists, move_note, reverse_rewrites
 from .search import parse_frontmatter
 from .vault import Vault, VaultError
 
@@ -191,3 +192,72 @@ def undo_move(vault: Vault, note_rel: str) -> dict:
         f"`{entry['to']}` back to `{entry['from']}`\n",
     )
     return {"restored": entry["from"], "was": entry["to"]}
+
+
+def run_sweep(vault: Vault, embedder=None, apply: bool = False) -> dict:
+    if embedder is None:
+        embedder = embeddings_mod.SentenceTransformerEmbedder()
+    vectors = embeddings_mod.get_note_vectors(
+        vault, indexer.state_dir(vault.root), embedder
+    )
+    taxonomy = set(discover_taxonomy(vault))
+    labeled = iter_organized(vault)
+    moved: list[dict] = []
+    proposals: list[dict] = []
+    skipped: list[dict] = []
+
+    for rel in iter_candidates(vault):
+        current = rel.split("/")[0] if "/" in rel and rel.split("/")[0] in taxonomy else None
+        cls = classify(rel, vectors, labeled)
+        if cls.folder is None:
+            skipped.append({"path": rel, "reason": "no vector or no labeled neighbors"})
+            continue
+        if current == cls.folder:
+            skipped.append({"path": rel, "reason": "already correctly filed"})
+            continue
+        if cls.share < VOTE_THRESHOLD:
+            if current is None:  # root notes queue for a human; filed notes rest
+                proposals.append({
+                    "path": rel, "suggested": cls.folder,
+                    "share": round(cls.share, 3),
+                    "neighbors": cls.neighbors[:3],
+                    "reason": "low confidence",
+                })
+            else:
+                skipped.append({"path": rel, "reason": "low-confidence disagreement"})
+            continue
+        if duplicate_stem_exists(vault, rel):
+            proposals.append({
+                "path": rel, "suggested": cls.folder,
+                "share": round(cls.share, 3),
+                "neighbors": cls.neighbors[:3],
+                "reason": "duplicate stem — bare links would become ambiguous",
+            })
+            continue
+        stem_name = rel.rsplit("/", 1)[-1]
+        target_rel = f"{cls.folder}/{stem_name}"
+        if apply:
+            record = move_note(vault, rel, target_rel)
+            record_move(vault, record, share=cls.share, neighbors=cls.neighbors[:3])
+        moved.append({
+            "from": rel, "to_folder": cls.folder,
+            "share": round(cls.share, 3), "neighbors": cls.neighbors[:3],
+        })
+
+    cache_rebuilt = False
+    if apply and moved:
+        cache.rebuild(vault, indexer.db_path(vault.root))
+        cache_rebuilt = True
+    if apply and proposals:
+        _ensure_note(vault)
+        lines = [f"\n### Proposals {datetime.now().strftime('%Y-%m-%d')}\n"]
+        for p in proposals:
+            lines.append(
+                f"- `{p['path']}` → **{p['suggested']}** "
+                f"(share {p['share']}; {p['reason']})\n"
+            )
+        vault.append(ORGANIZER_NOTE, "".join(lines))
+    return {
+        "moved": moved, "proposals": proposals,
+        "skipped": skipped, "cache_rebuilt": cache_rebuilt,
+    }
