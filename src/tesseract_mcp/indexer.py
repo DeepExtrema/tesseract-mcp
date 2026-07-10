@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import cache
 from . import embeddings as embeddings_mod
-from .extractor import CliExtractor, ExtractorError
+from .extractor import ExtractorError, extraction_extractor
 from .graphstore import GRAPH_ROOT, GraphStore
 from .search import SKIP_DIRS
 from .vault import Vault, VaultError
@@ -166,7 +166,7 @@ def main() -> None:
         return
     counts = run(
         Vault(args.vault),
-        CliExtractor(backend=args.backend),
+        extraction_extractor(backend=args.backend),
         batch=args.batch,
         force=args.force,
     )

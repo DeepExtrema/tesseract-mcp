@@ -168,7 +168,7 @@ def test_consolidate_graph_dry_run(monkeypatch):
         def complete_json(self, prompt):
             return {"merges": []}
 
-    monkeypatch.setattr(server, "_make_extractor", lambda: FakeBackend())
+    monkeypatch.setattr(server, "_make_consolidator", lambda: FakeBackend())
     result = server.consolidate_graph()
     assert result["applied"] is False and result["proposed"] == []
 

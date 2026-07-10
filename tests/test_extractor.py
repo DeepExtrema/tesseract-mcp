@@ -10,6 +10,8 @@ from tesseract_mcp.extractor import (
     Extraction,
     ExtractorError,
     _coerce,
+    consolidation_extractor,
+    extraction_extractor,
 )
 
 
@@ -239,3 +241,61 @@ def test_complete_json_retries_then_raises():
     ex = CliExtractor(backend="codex", runner=runner, which=lambda n: n)
     with pytest.raises(ExtractorError):
         ex.complete_json("p")
+
+
+class _Proc:
+    def __init__(self, stdout='{"entities": [], "relations": []}'):
+        self.returncode = 0
+        self.stdout = stdout
+        self.stderr = ""
+
+
+def _capture_runner(captured):
+    def run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _Proc()
+    return run
+
+
+def test_claude_backend_gets_model_flag():
+    captured = {}
+    ex = CliExtractor(backend="claude", model="haiku",
+                      runner=_capture_runner(captured),
+                      which=lambda e: "C:/bin/claude.exe")
+    ex.extract("n.md", "some text")
+    cmd = captured["cmd"]
+    assert cmd[-2:] == ["--model", "haiku"]
+
+
+def test_codex_backend_ignores_model():
+    captured = {}
+    ex = CliExtractor(backend="codex", model="haiku",
+                      runner=_capture_runner(captured),
+                      which=lambda e: "C:/bin/codex.exe")
+    ex.extract("n.md", "some text")
+    assert "--model" not in captured["cmd"]
+
+
+def test_no_model_no_flag():
+    captured = {}
+    ex = CliExtractor(backend="claude",
+                      runner=_capture_runner(captured),
+                      which=lambda e: "C:/bin/claude.exe")
+    ex.extract("n.md", "some text")
+    assert "--model" not in captured["cmd"]
+
+
+def test_factory_defaults(monkeypatch):
+    monkeypatch.delenv("TESSERACT_EXTRACT_MODEL", raising=False)
+    monkeypatch.delenv("TESSERACT_CONSOLIDATE_MODEL", raising=False)
+    monkeypatch.setenv("TESSERACT_EXTRACTOR", "claude")
+    assert extraction_extractor().model == "haiku"
+    assert consolidation_extractor().model == "sonnet"
+
+
+def test_factory_env_overrides(monkeypatch):
+    monkeypatch.setenv("TESSERACT_EXTRACTOR", "claude")
+    monkeypatch.setenv("TESSERACT_EXTRACT_MODEL", "sonnet")
+    monkeypatch.setenv("TESSERACT_CONSOLIDATE_MODEL", "opus")
+    assert extraction_extractor().model == "sonnet"
+    assert consolidation_extractor().model == "opus"

@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, organizer as organizer_mod, tasks as tasks_mod
 from .embeddings import SentenceTransformerEmbedder
-from .extractor import CliExtractor
+from .extractor import consolidation_extractor, extraction_extractor
 from .vault import Vault, VaultError
 
 INSTRUCTIONS = """Tesseract mind database: a shared Obsidian vault (markdown,
@@ -259,7 +259,11 @@ def onboard() -> dict:
 
 
 def _make_extractor():
-    return CliExtractor()
+    return extraction_extractor()
+
+
+def _make_consolidator():
+    return consolidation_extractor()
 
 
 def _graph_db():
@@ -303,7 +307,7 @@ def consolidate_graph(apply: bool = False) -> dict:
     """Find duplicate graph entities (name variants of the same thing) via an
     LLM pass. Dry-run by default — returns proposed merges for review; call
     again with apply=True to merge them into canonical entities."""
-    return consolidate_mod.run(get_vault(), _make_extractor(), apply=apply)
+    return consolidate_mod.run(get_vault(), _make_consolidator(), apply=apply)
 
 
 def main() -> None:
