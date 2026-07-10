@@ -294,3 +294,25 @@ def test_main_init_live_uses_env_vault(tmp_path, monkeypatch, capsys):
     assert main(["--init-live"]) == 0
     assert "created" in capsys.readouterr().out
     assert (root / "Claude" / "Evals.md").is_file()
+
+
+import os
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TESSERACT_RUN_EVALS"),
+    reason="set TESSERACT_RUN_EVALS=1 to run the model-backed eval gate",
+)
+def test_fixture_thresholds_with_real_model(tmp_path, monkeypatch):
+    """Floors, not exact ranks: if this fails after a ranking change, the
+    change lost real recall. If the baseline sits below a floor, fix the
+    fixture or golden set -- never lower the floor."""
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    queries = load_golden(FIXTURE_GOLDEN)
+    sc = run_evals(
+        Vault(FIXTURE_VAULT), tmp_path / "state",
+        evals_mod._make_embedder(), queries,
+    )
+    assert sc.skipped == 0
+    assert sc.success_at[10] >= 0.80
+    assert sc.mrr >= 0.50

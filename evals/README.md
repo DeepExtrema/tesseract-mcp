@@ -37,3 +37,4 @@ the fixture or the golden set — never lower the floor to pass.
 
 | date | git | success@5 | success@10 | recall@5 | recall@10 | MRR |
 |---|---|---|---|---|---|---|
+| 2026-07-10 | 55ce90e | 0.875 | 0.9375 | 0.875 | 0.9375 | 0.889 |

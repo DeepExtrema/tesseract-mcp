@@ -301,6 +301,7 @@ for how to stand it up.
 | `consolidate.py` | LLM-driven consolidation of duplicate graph entities. |
 | `conventions.py` | Installs the `Claude/` conventions tree (constitution, seed notes, root guides) into a vault; idempotent. |
 | `embeddings.py` | Vector source for hybrid search: Smart Connections' embeddings where fresh, a same-model local fallback (cached) where stale or missing. |
+| `evals.py` | Golden-query eval harness: scores hybrid search (success@k, recall@k, MRR) against the fixture corpus in `evals/` or a private `Claude/Evals.md` set in the live vault. |
 | `extractor.py` | LLM entity extraction via pluggable CLI backends (`codex` / `claude`). |
 | `graph.py` | Vault metadata queries: frontmatter filtering, wikilink backlinks, recent files. |
 | `graphstore.py` | Markdown-native graph store: reads and writes entity notes under `Claude/Graph/`. |
