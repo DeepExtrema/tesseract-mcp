@@ -19,6 +19,8 @@ flowchart LR
     C <-->|MCP tools| S[tesseract-mcp server]
     S <-->|read/write markdown| V[(Obsidian vault)]
     S <-->|rebuildable caches| Q[(SQLite + embeddings in ~/.tesseract-mcp/)]
+    L[Librarian + organizer<br/>scheduled caretakers] -->|index, file, heal| V
+    L --> Q
     V <-->|LiveSync| DB[(CouchDB)]
     DB <-->|LiveSync| M2[Vault on other machines]
 ```
@@ -66,6 +68,40 @@ organizer cron jobs. Sweep reports land in `Claude/Librarian.md`; the
 `python -m tesseract_mcp.provision <path-to-vault>` installs a pinned plugin
 set, seeds settings (embed model pinned to what the search stack reads), and
 installs the agent conventions tree. `--check` reports version drift.
+
+## How retrieval works
+
+```mermaid
+flowchart LR
+    Q[query] --> F[candidate filter<br/>tags / folder]
+    F --> B[BM25L keyword rank<br/>top 50]
+    F --> E[cosine similarity<br/>Smart Connections vectors,<br/>bge-micro-v2 fallback<br/>top 50]
+    B --> R[Reciprocal Rank Fusion<br/>k = 60]
+    E --> R
+    F -.->|only when BM25 is empty| SUB[substring rank]
+    SUB -.-> R
+    R --> H[ranked hits with excerpts]
+```
+
+Every query runs both rankers over the filtered candidate set, and RRF merges
+them by rank position — so BM25 scores and cosine similarities never need to
+be normalized against each other. The substring ranker is a fallback signal
+for queries BM25's tokenizer can't match (single characters, punctuation),
+never a third competitor. Full detail in
+[ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Measured retrieval quality
+
+| success@5 | success@10 | recall@5 | recall@10 | MRR |
+|---|---|---|---|---|
+| 0.88 | 0.94 | 0.88 | 0.94 | 0.89 |
+
+Sixteen golden queries — keyword, paraphrase, title, tag, entity, and
+degenerate-input traps — run against the production `hybrid_search` path with
+real bge-micro-v2 embeddings over the synthetic 20-note corpus committed in
+[`evals/`](evals/README.md) (synthetic because this repo is public; a private
+golden set lives in the vault itself). Reproduce with
+`python -m tesseract_mcp.evals`.
 
 ## Tools
 
