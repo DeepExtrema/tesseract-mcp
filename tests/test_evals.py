@@ -192,3 +192,77 @@ def test_run_evals_accept_counts_for_rank_not_recall(tmp_path, monkeypatch):
     r = sc.results[0]
     assert r.first_rank is not None          # B found -> relevant
     assert r.recall_at[10] == 0.0            # but expect A never showed
+
+
+import json as jsonlib
+
+from tesseract_mcp import evals as evals_mod
+from tesseract_mcp.evals import append_history, format_table, main, to_json
+
+
+def _scorecard(tmp_path, monkeypatch):
+    vault = _eval_vault(tmp_path, monkeypatch)
+    qs = [GoldenQuery(id="q1", query="alpha", expect=["Notes/A.md"])]
+    return run_evals(vault, tmp_path / "state", KeywordEmbedder(), qs)
+
+
+def test_format_table_has_aggregate_line(tmp_path, monkeypatch):
+    out = format_table(_scorecard(tmp_path, monkeypatch))
+    assert "MRR" in out and "success@10" in out and "q1" in out
+
+
+def test_to_json_round_trips(tmp_path, monkeypatch):
+    d = to_json(_scorecard(tmp_path, monkeypatch))
+    assert d["mrr"] == 1.0
+    assert d["queries"][0]["id"] == "q1"
+    jsonlib.dumps(d)  # serializable
+
+
+def test_append_history_writes_jsonl(tmp_path, monkeypatch):
+    sc = _scorecard(tmp_path, monkeypatch)
+    p = append_history(tmp_path / "state", sc, "vaultpath", "goldenpath")
+    lines = p.read_text(encoding="utf-8").strip().splitlines()
+    rec = jsonlib.loads(lines[-1])
+    assert rec["mrr"] == 1.0 and rec["vault"] == "vaultpath"
+
+
+def test_main_fixture_mode_end_to_end(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    vault_root = tmp_path / "vault"
+    (vault_root / "Notes").mkdir(parents=True)
+    (vault_root / "Notes" / "A.md").write_text("alpha", encoding="utf-8")
+    golden = tmp_path / "golden.yaml"
+    golden.write_text("- {id: q1, query: alpha, expect: [Notes/A.md]}\n",
+                      encoding="utf-8")
+    monkeypatch.setattr(evals_mod, "_make_embedder", KeywordEmbedder)
+    rc = main(["--vault", str(vault_root), "--golden", str(golden), "--json"])
+    assert rc == 0
+    out = jsonlib.loads(capsys.readouterr().out)
+    assert out["mrr"] == 1.0
+    history = tmp_path / "state" / "eval_history.jsonl"
+    assert history.exists()
+
+
+def test_main_bad_golden_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "vault").mkdir()
+    rc = main(["--vault", str(tmp_path / "vault"),
+               "--golden", str(tmp_path / "missing.yaml")])
+    assert rc == 2
+    assert "error:" in capsys.readouterr().err
+
+
+def test_main_live_without_env_exits_2(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("TESSERACT_VAULT_PATH", raising=False)
+    rc = main(["--live"])
+    assert rc == 2
+
+
+def test_main_missing_vault_exits_2(tmp_path, monkeypatch, capsys):
+    # Vault.__init__ raises VaultError for a nonexistent root; the CLI
+    # must map that to the exit-2 config-error contract, not a traceback.
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    rc = main(["--vault", str(tmp_path / "nope"),
+               "--golden", str(tmp_path / "missing.yaml")])
+    assert rc == 2
+    assert "error:" in capsys.readouterr().err

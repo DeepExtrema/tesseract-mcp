@@ -10,14 +10,20 @@ assertions, which punish semantic recall improvements.
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
 import re
+import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from . import hybrid
-from .vault import Vault
+from . import hybrid, indexer
+from .vault import Vault, VaultError
 
 # Source-checkout layout (src/tesseract_mcp/evals.py -> repo root). The
 # fixture paths only make sense in a checkout, not an installed wheel;
@@ -190,3 +196,140 @@ def run_evals(
         mrr=sum(1.0 / r.first_rank for r in scored if r.first_rank) / n,
         skipped=len(results) - len(scored),
     )
+
+
+def format_table(sc: Scorecard) -> str:
+    # Derive k values from the scorecard so custom ks never KeyError.
+    kmax = max(sc.recall_at)
+    lines = [f"{'id':<28} {'rank':>4} {'r@' + str(kmax):>5}  miss"]
+    for r in sc.results:
+        if r.skipped:
+            lines.append(f"{r.id:<28} {'skip':>4} {'-':>5}  {', '.join(r.missing)}")
+            continue
+        rank = str(r.first_rank) if r.first_rank else "-"
+        lines.append(
+            f"{r.id:<28} {rank:>4} {r.recall_at[kmax]:>5.2f}  {', '.join(r.missing)}"
+        )
+    scored = len(sc.results) - sc.skipped
+    agg = "  ".join(
+        f"success@{k} {sc.success_at[k]:.2f}" for k in sorted(sc.success_at)
+    )
+    agg += "  " + "  ".join(
+        f"recall@{k} {sc.recall_at[k]:.2f}" for k in sorted(sc.recall_at)
+    )
+    lines.append("-" * 60)
+    lines.append(
+        f"queries {scored}  skipped {sc.skipped}  {agg}  MRR {sc.mrr:.2f}"
+    )
+    return "\n".join(lines)
+
+
+def to_json(sc: Scorecard) -> dict:
+    kmax = max(sc.recall_at)
+    d: dict = {f"success_at_{k}": v for k, v in sorted(sc.success_at.items())}
+    d.update({f"recall_at_{k}": v for k, v in sorted(sc.recall_at.items())})
+    d["mrr"] = sc.mrr
+    d["skipped"] = sc.skipped
+    d["n_queries"] = len(sc.results)
+    d["queries"] = [
+        {
+            "id": r.id,
+            "first_rank": r.first_rank,
+            "skipped": r.skipped,
+            "recall": r.recall_at.get(kmax),
+            "missing": r.missing,
+        }
+        for r in sc.results
+    ]
+    return d
+
+
+def _git_sha() -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def append_history(
+    state_root: str | Path, sc: Scorecard, vault_path, golden_path
+) -> Path:
+    state = Path(state_root)
+    state.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "git": _git_sha(),
+        "vault": str(vault_path),
+        "golden": str(golden_path),
+        **to_json(sc),
+    }
+    p = state / HISTORY_FILE
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    return p
+
+
+def _make_embedder():
+    from .embeddings import SentenceTransformerEmbedder
+
+    return SentenceTransformerEmbedder()
+
+
+def init_live(vault: Vault) -> tuple[Path, bool]:
+    raise EvalConfigError("--init-live not implemented yet")
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(
+        prog="python -m tesseract_mcp.evals",
+        description="Golden-query evaluation for hybrid search.",
+    )
+    p.add_argument("--vault", help="vault root (default: fixture corpus)")
+    p.add_argument("--golden", help="golden file (default: evals/golden.yaml)")
+    p.add_argument("--live", action="store_true",
+                   help="use TESSERACT_VAULT_PATH and Claude/Evals.md "
+                        "(takes precedence over --vault/--golden)")
+    p.add_argument("--json", action="store_true", dest="as_json")
+    p.add_argument("--no-history", action="store_true")
+    p.add_argument("--init-live", action="store_true",
+                   help="create Claude/Evals.md template if absent, then exit")
+    args = p.parse_args(argv)
+    try:
+        if args.live or args.init_live:
+            root = os.environ.get("TESSERACT_VAULT_PATH")
+            if not root:
+                raise EvalConfigError(
+                    "--live/--init-live require TESSERACT_VAULT_PATH"
+                )
+            vault_path = Path(root)
+            golden_path = vault_path / LIVE_GOLDEN_REL
+            lenient = True
+        else:
+            vault_path = Path(args.vault) if args.vault else FIXTURE_VAULT
+            golden_path = Path(args.golden) if args.golden else FIXTURE_GOLDEN
+            lenient = False
+        vault = Vault(vault_path)
+        if args.init_live:
+            target, created = init_live(vault)
+            print(f"{'created' if created else 'already exists'}: {target}")
+            return 0
+        queries = load_golden(golden_path)
+        sc = run_evals(
+            vault, indexer.state_dir(vault.root), _make_embedder(),
+            queries, lenient=lenient,
+        )
+    except (EvalConfigError, VaultError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(to_json(sc), indent=2) if args.as_json else format_table(sc))
+    if not args.no_history:
+        append_history(indexer.state_dir(vault.root), sc, vault_path, golden_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
