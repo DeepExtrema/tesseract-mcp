@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import yaml
 
@@ -126,6 +126,10 @@ def load_golden(path: str | Path) -> list[GoldenQuery]:
     for i, item in enumerate(raw):
         if not isinstance(item, dict) or "id" not in item or "query" not in item:
             raise EvalConfigError(f"entry {i} in {p} needs 'id' and 'query'")
+        if not str(item["id"]).strip() or not str(item["query"]).strip():
+            raise EvalConfigError(
+                f"entry {i} in {p}: 'id' and 'query' must be non-empty strings"
+            )
         queries.append(
             GoldenQuery(
                 id=str(item["id"]),
@@ -147,6 +151,13 @@ def load_golden(path: str | Path) -> list[GoldenQuery]:
     return queries
 
 
+def _escapes_vault(rel: str) -> bool:
+    """Lexical containment check: absolute paths and ..-traversal never get
+    probed on disk — golden paths are vault-relative by contract."""
+    pp = PurePath(rel)
+    return pp.is_absolute() or bool(pp.drive) or ".." in pp.parts
+
+
 def validate_paths(
     queries: list[GoldenQuery], vault_root: str | Path, strict: bool
 ) -> dict[str, list[str]]:
@@ -154,7 +165,10 @@ def validate_paths(
     root = Path(vault_root)
     missing: dict[str, list[str]] = {}
     for q in queries:
-        gone = [p for p in q.expect + q.accept if not (root / p).is_file()]
+        gone = [
+            p for p in q.expect + q.accept
+            if _escapes_vault(p) or not (root / p).is_file()
+        ]
         if gone:
             missing[q.id] = gone
     if strict and missing:
@@ -363,7 +377,12 @@ def main(argv=None) -> int:
         return 2
     print(json.dumps(to_json(sc), indent=2) if args.as_json else format_table(sc))
     if not args.no_history:
-        append_history(indexer.state_dir(vault.root), sc, vault_path, golden_path)
+        try:
+            append_history(indexer.state_dir(vault.root), sc, vault_path, golden_path)
+        except OSError as e:
+            # History is optional persistence (--no-history exists); a failed
+            # append must not turn a successful eval into a traceback.
+            print(f"warning: could not write eval history: {e}", file=sys.stderr)
     return 0
 
 

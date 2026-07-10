@@ -114,6 +114,16 @@ def test_load_golden_non_list_non_scalar_field_errors(tmp_path):
         load_golden(p)
 
 
+def test_load_golden_empty_id_or_query_errors(tmp_path):
+    p = tmp_path / "golden.yaml"
+    p.write_text('- {id: "", query: a, expect: [A.md]}\n', encoding="utf-8")
+    with pytest.raises(EvalConfigError, match="non-empty"):
+        load_golden(p)
+    p.write_text('- {id: q1, query: "  ", expect: [A.md]}\n', encoding="utf-8")
+    with pytest.raises(EvalConfigError, match="non-empty"):
+        load_golden(p)
+
+
 def _mini_vault(tmp_path):
     (tmp_path / "Notes").mkdir()
     (tmp_path / "Notes" / "A.md").write_text("alpha", encoding="utf-8")
@@ -131,6 +141,22 @@ def test_validate_paths_lenient_returns_missing_map(tmp_path):
     root = _mini_vault(tmp_path)
     qs = [GoldenQuery(id="q1", query="a", expect=["Notes/GONE.md"])]
     assert validate_paths(qs, root, strict=False) == {"q1": ["Notes/GONE.md"]}
+
+
+def test_validate_paths_rejects_paths_escaping_the_vault(tmp_path):
+    """Absolute and ..-traversal golden paths must never be probed: they are
+    reported missing even when the target exists outside the vault."""
+    outside = tmp_path / "outside.md"
+    outside.write_text("exists but out of bounds", encoding="utf-8")
+    root = tmp_path / "vault"
+    (root / "Notes").mkdir(parents=True)
+    (root / "Notes" / "A.md").write_text("in bounds", encoding="utf-8")
+    qs = [GoldenQuery(id="q1", query="a",
+                      expect=[str(outside), "../outside.md", "Notes/A.md"])]
+    missing = validate_paths(qs, root, strict=False)
+    assert missing == {"q1": [str(outside), "../outside.md"]}
+    with pytest.raises(EvalConfigError, match="outside.md"):
+        validate_paths(qs, root, strict=True)
 
 
 from tesseract_mcp.evals import FIXTURE_GOLDEN, FIXTURE_VAULT
@@ -264,6 +290,26 @@ def test_main_fixture_mode_end_to_end(tmp_path, monkeypatch, capsys):
     assert history.exists()
 
 
+def test_main_history_write_failure_warns_not_crashes(tmp_path, monkeypatch, capsys):
+    """A failed history append must not turn a successful eval into a traceback."""
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    vault_root = tmp_path / "vault"
+    (vault_root / "Notes").mkdir(parents=True)
+    (vault_root / "Notes" / "A.md").write_text("alpha", encoding="utf-8")
+    golden = tmp_path / "golden.yaml"
+    golden.write_text("- {id: q1, query: alpha, expect: [Notes/A.md]}\n",
+                      encoding="utf-8")
+    monkeypatch.setattr(evals_mod, "_make_embedder", KeywordEmbedder)
+
+    def boom(*a, **kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(evals_mod, "append_history", boom)
+    rc = main(["--vault", str(vault_root), "--golden", str(golden)])
+    assert rc == 0
+    assert "history" in capsys.readouterr().err.lower()
+
+
 def test_main_bad_golden_exits_2(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "vault").mkdir()
@@ -321,7 +367,7 @@ import os
 
 
 @pytest.mark.skipif(
-    not os.environ.get("TESSERACT_RUN_EVALS"),
+    os.environ.get("TESSERACT_RUN_EVALS") != "1",
     reason="set TESSERACT_RUN_EVALS=1 to run the model-backed eval gate",
 )
 def test_fixture_thresholds_with_real_model(tmp_path, monkeypatch):
