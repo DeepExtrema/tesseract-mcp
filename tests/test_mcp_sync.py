@@ -142,8 +142,31 @@ def test_build_add_command_stdio_with_env():
     spec = _spec("fetch", env={"PYTHONIOENCODING": "utf-8"})
     cmd = build_add_command(spec)
     assert cmd == ["claude", "mcp", "add", "--scope", "user", "fetch",
-                   "-e", "PYTHONIOENCODING=utf-8", "--",
+                   "--env", "PYTHONIOENCODING=utf-8", "--",
                    "uvx", "mcp-server-fetch@2026.6.4"]
+
+
+def test_run_sync_missing_vault_aborts_before_subprocess(tmp_path):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "tesseract", "transport": "stdio", "command": "x",
+         "args": [], "env": {"TESSERACT_VAULT_PATH": "{VAULT}"}, "why": ""},
+    ])
+    config = tmp_path / "claude.json"
+    config.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    calls = []
+
+    code = run_sync(manifest, config, tmp_path, None, check_only=False,
+                    runner=lambda argv, **kw: calls.append(argv))
+    assert code == 2
+    assert calls == []
+
+
+def test_main_errors_clearly_when_manifest_missing(tmp_path):
+    from tesseract_mcp import mcp_sync
+
+    with pytest.raises(SystemExit) as exc:
+        mcp_sync.main(["--manifest", str(tmp_path / "nope.json")])
+    assert exc.value.code == 2
 
 
 def test_run_sync_registers_only_missing(tmp_path, capsys):

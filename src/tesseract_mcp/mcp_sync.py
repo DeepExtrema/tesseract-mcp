@@ -141,11 +141,19 @@ def build_add_command(spec: ServerSpec) -> list[str]:
         return cmd + ["--transport", "http", spec.name, spec.url]
     cmd.append(spec.name)
     for k, v in spec.env.items():
-        cmd += ["-e", f"{k}={v}"]
+        cmd += ["--env", f"{k}={v}"]
     cmd.append("--")
     cmd.append(spec.command)
     cmd += spec.args
     return cmd
+
+
+def _format_command(argv: list[str]) -> str:
+    """Human-pasteable command text for the operator's shell: PowerShell/cmd
+    quoting on Windows, POSIX quoting elsewhere."""
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
 
 
 def _remediation(name: str) -> str:
@@ -183,23 +191,25 @@ def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
     # Windows: subprocess.run without shell=True resolves only .exe, so an
     # npm-shim claude.cmd needs the full path from which().
     claude_exe = which("claude")
-    if result.missing and claude_exe is None:
-        for spec in result.missing:
-            argv = build_add_command(spec)
-            print(f"register: {' '.join(shlex.quote(a) for a in argv)}")
+    pending = [(spec, build_add_command(spec)) for spec in result.missing]
+    if pending and claude_exe is None:
+        for _, argv in pending:
+            print(f"register: {_format_command(argv)}")
         print("claude CLI not found on PATH. Run the printed command(s) "
               "manually, or install Claude Code. Nothing was registered.")
         return 3
 
     failures = 0
-    for spec in result.missing:
-        argv = build_add_command(spec)
-        print(f"register: {' '.join(shlex.quote(a) for a in argv)}")
+    for i, (spec, argv) in enumerate(pending):
+        print(f"register: {_format_command(argv)}")
         try:
             proc = runner([claude_exe] + argv[1:], check=False)
         except FileNotFoundError:
+            # still print the commands we never got to run
+            for _, rest in pending[i + 1:]:
+                print(f"register: {_format_command(rest)}")
             print("claude CLI not found on PATH. Run the printed command(s) "
-                  "manually, or install Claude Code. Nothing was registered.")
+                  "manually, or install Claude Code.")
             return 3
         if getattr(proc, "returncode", 1) != 0:
             print(f"  FAILED (exit {proc.returncode}) — continuing with the rest")
@@ -218,6 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", default=str(repo_root / "mcp-servers.json"))
     parser.add_argument("--config", default=str(Path.home() / ".claude.json"))
     args = parser.parse_args(argv)
+    if not Path(args.manifest).is_file():
+        # the default assumes a source checkout; installed wheels don't
+        # package the manifest, so fail fast with a clear pointer
+        parser.error(f"manifest not found at {args.manifest} — pass --manifest "
+                     "pointing at your checkout's mcp-servers.json")
     return run_sync(Path(args.manifest), Path(args.config), repo_root,
                     args.vault, check_only=args.check)
 

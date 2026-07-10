@@ -89,10 +89,12 @@ def check_orphaned_entities(vault: Vault) -> list[dict]:
     if not db.exists():
         return []
     con = sqlite3.connect(db)
-    rows = con.execute(
-        "SELECT DISTINCT entity_path, note_path FROM mentions"
-    ).fetchall()
-    con.close()
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT entity_path, note_path FROM mentions"
+        ).fetchall()
+    finally:
+        con.close()
     return [
         {"entity": entity_path, "missing_note": note_path}
         for entity_path, note_path in rows
@@ -107,8 +109,10 @@ def check_cache_consistency(vault: Vault) -> dict:
         return {"db_entities": None, "md_entities": md_count,
                 "consistent": md_count == 0}
     con = sqlite3.connect(db)
-    db_count = con.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-    con.close()
+    try:
+        db_count = con.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+    finally:
+        con.close()
     return {"db_entities": db_count, "md_entities": md_count,
             "consistent": db_count == md_count}
 
@@ -165,6 +169,13 @@ def _drain_index(vault: Vault, extractor) -> dict:
             totals["skipped"] = counts["skipped"]
         if counts["remaining"] == 0:
             break
+    if totals and totals.get("remaining", 0) > 0:
+        # surface as a step error (non-zero exit) instead of silently
+        # reporting partial totals as a successful index
+        raise RuntimeError(
+            f"index did not drain after {MAX_INDEX_ROUNDS} rounds; "
+            f"{totals['remaining']} notes still pending"
+        )
     return totals or {}
 
 

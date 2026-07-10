@@ -241,6 +241,15 @@ def test_drain_index_loops_until_no_remaining(vault, monkeypatch):
     assert totals["remaining"] == 0
 
 
+def test_drain_index_raises_when_rounds_exhausted(vault, monkeypatch):
+    """Exhausting MAX_INDEX_ROUNDS with work pending is a step failure, not a
+    silently-partial success — the CLI must exit non-zero."""
+    monkeypatch.setattr(librarian.indexer, "run",
+                        lambda v, e, **k: _counts(processed=1, remaining=5))
+    with pytest.raises(RuntimeError, match="did not drain"):
+        librarian._drain_index(vault, FakeExtractor())
+
+
 def test_step_failure_is_isolated(vault, monkeypatch):
     def boom(v, emb, apply):
         raise RuntimeError("organize kaput")
