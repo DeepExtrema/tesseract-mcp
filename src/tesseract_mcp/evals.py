@@ -16,6 +16,9 @@ from pathlib import Path
 
 import yaml
 
+from . import hybrid
+from .vault import Vault
+
 # Source-checkout layout (src/tesseract_mcp/evals.py -> repo root). The
 # fixture paths only make sense in a checkout, not an installed wheel;
 # this harness is a repo-local dev tool.
@@ -138,3 +141,52 @@ def validate_paths(
         detail = "; ".join(f"{qid}: {', '.join(ps)}" for qid, ps in missing.items())
         raise EvalConfigError(f"golden paths missing from vault: {detail}")
     return missing
+
+
+def run_evals(
+    vault: Vault,
+    state_root: str | Path,
+    embedder,
+    queries: list[GoldenQuery],
+    ks: tuple[int, ...] = KS,
+    limit: int = RETRIEVE_LIMIT,
+    lenient: bool = False,
+) -> Scorecard:
+    # A fresh state dir must not crash the first fallback-cache save
+    # (embeddings._save_fallback_cache writes without mkdir).
+    Path(state_root).mkdir(parents=True, exist_ok=True)
+    missing = validate_paths(queries, vault.root, strict=not lenient)
+    results: list[QueryResult] = []
+    for q in queries:
+        gone = missing.get(q.id, [])
+        if lenient and set(gone) >= set(q.expect):
+            results.append(
+                QueryResult(q.id, [], None, {k: 0.0 for k in ks},
+                            {k: False for k in ks}, gone, skipped=True)
+            )
+            continue
+        hits = hybrid.hybrid_search(
+            vault, state_root, embedder, q.query,
+            tags=q.tags, folder=q.folder, limit=limit,
+        )
+        paths = [h.path for h in hits]
+        expect = set(q.expect) - set(gone)
+        relevant = (set(q.expect) | set(q.accept)) - set(gone)
+        results.append(
+            QueryResult(
+                q.id, paths,
+                first_relevant_rank(paths, relevant),
+                {k: recall_at_k(paths, expect, k) for k in ks},
+                {k: success_at_k(paths, relevant, k) for k in ks},
+                gone,
+            )
+        )
+    scored = [r for r in results if not r.skipped]
+    n = len(scored) or 1
+    return Scorecard(
+        results=results,
+        success_at={k: sum(r.success_at[k] for r in scored) / n for k in ks},
+        recall_at={k: sum(r.recall_at[k] for r in scored) / n for k in ks},
+        mrr=sum(1.0 / r.first_rank for r in scored if r.first_rank) / n,
+        skipped=len(results) - len(scored),
+    )
