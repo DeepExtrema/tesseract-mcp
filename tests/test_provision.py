@@ -41,9 +41,9 @@ def good_assets(plugin_id="dataview", version="0.5.68", base=BASE):
     }
 
 
-def test_repo_manifest_loads_ten_pinned_plugins():
+def test_repo_manifest_loads_fourteen_pinned_plugins():
     specs = load_plugin_manifest()
-    assert len(specs) == 10
+    assert len(specs) == 14
     by_id = {s.id: s for s in specs}
     assert by_id["smart-connections"].repo == "brianpetro/obsidian-smart-connections"
     assert all(s.version for s in specs)
@@ -178,6 +178,13 @@ def test_provision_fresh_vault_end_to_end(tmp_path):
         (tmp_path / ".obsidian" / "community-plugins.json").read_text(encoding="utf-8")
     )
     assert "smart-connections" in enabled
+    for plugin_id in (
+        "extended-graph",
+        "graph-styler",
+        "translucent-bg",
+        "obsidian-style-settings",
+    ):
+        assert plugin_id in enabled
     assert (tmp_path / ".smart-env" / "smart_env.json").is_file()
     assert (tmp_path / "Claude" / "README.md").is_file()
 

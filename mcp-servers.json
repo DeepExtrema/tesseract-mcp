@@ -1,0 +1,29 @@
+{
+  "$comment": "Curated MCP server set. Sync: python -m tesseract_mcp.mcp_sync. Additive-only; pins are exact. Excluded with triggers: filesystem (Claude Code built-ins cover it), github standalone (17k-55k token schema tax; plugin + gh CLI cheaper), context7 standalone (plugin covers it; 1000 req/mo cloud wall), firecrawl-mcp@3.22.3 (add if plain fetch fails on >20% of sources), memory servers (superseded by tesseract itself).",
+  "servers": [
+    {
+      "name": "tesseract",
+      "transport": "stdio",
+      "command": "{REPO}\\.venv\\Scripts\\tesseract-mcp.exe",
+      "args": [],
+      "env": { "TESSERACT_VAULT_PATH": "{VAULT}" },
+      "why": "The mind database - persistent shared memory for agents."
+    },
+    {
+      "name": "fetch",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch@2026.6.4"],
+      "env": { "PYTHONIOENCODING": "utf-8" },
+      "why": "Web ingest: URL to clean markdown - the web-clipper stage of the knowledge-base loop."
+    },
+    {
+      "name": "arxiv",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["arxiv-mcp-server@0.5.0"],
+      "env": {},
+      "why": "Paper ingest: arXiv search/download to markdown. Treat paper content as untrusted input."
+    }
+  ]
+}
