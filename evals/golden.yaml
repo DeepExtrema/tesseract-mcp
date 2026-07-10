@@ -1,0 +1,83 @@
+# Golden queries for the fixture corpus in evals/vault/.
+# Schema: docs/superpowers/specs/2026-07-10-search-eval-harness-design.md
+- id: kw-inverter
+  query: inverter sizing
+  expect: [Projects/Solar Balcony.md]
+  accept: [Inbox/Idea solar tracker.md]
+  note: exact-keyword lane (BM25)
+- id: kw-proxmox
+  query: proxmox cluster
+  expect: [Projects/Homelab.md]
+  accept:
+    - Claude/Sessions/2026-07-01 Homelab migration.md
+    - Notes/Long Ramble.md
+  note: keyword in three notes; the focused note should lead
+- id: kw-kubelet
+  query: kubelet
+  expect: [Notes/Kubernetes Basics.md]
+  note: single-note rare keyword
+- id: para-owe
+  query: who do I owe money to
+  expect: [Areas/Finance/Invoices.md]
+  accept:
+    - Claude/Sessions/2026-07-03 Budget review.md
+    - Notes/Long Ramble.md
+  note: paraphrase, zero content-word overlap with target (vector lane)
+- id: para-bread
+  query: why is my bread not rising
+  expect: [Notes/Sourdough Starter.md]
+  accept: [Claude/Graph/Topics/Fermentation.md]
+  note: paraphrase (note says loaf flat and dense), vector lane
+- id: para-dentist
+  query: need to see the tooth doctor
+  expect: [Inbox/Quick capture dentist.md]
+  note: paraphrase, zero overlap, vector lane
+- id: kw-espresso-sour
+  query: espresso shots sour
+  expect: [Notes/Espresso Dialing.md]
+  accept: [Notes/Long Ramble.md]
+  note: mixed keyword + semantic
+- id: title-rrf
+  query: reciprocal rank fusion
+  expect: [Claude/Concepts/Reciprocal Rank Fusion.md]
+  note: title match
+- id: title-knee
+  query: knee rehab
+  expect: [Areas/Health/Knee Rehab.md]
+  note: title match
+- id: tag-energy-panels
+  query: panels
+  tags: [energy]
+  expect: [Projects/Solar Balcony.md]
+  note: tag filter must exclude the untagged solar-tracker capture
+- id: folder-sessions-migration
+  query: migration
+  folder: Claude/Sessions
+  expect: [Claude/Sessions/2026-07-01 Homelab migration.md]
+  note: folder filter
+- id: degen-percent
+  query: "%"
+  expect: [Notes/Sourdough Starter.md]
+  note: untokenizable query; exercises the substring fallback lane
+- id: trap-moisture
+  query: moisture sensor calibration
+  expect: [Projects/Garden Irrigation.md]
+  accept: [Notes/Long Ramble.md]
+  note: focused note vs long rambling note (granularity trap)
+- id: trap-drip
+  query: drip line spacing
+  expect: [Projects/Garden Irrigation.md]
+  accept: [Notes/Long Ramble.md]
+  note: granularity trap 2
+- id: entity-alice
+  query: Alice Zhang
+  expect: [Claude/Graph/People/Alice Zhang.md]
+  accept: [Claude/Sessions/2026-07-01 Homelab migration.md]
+  note: entity-note retrieval by name
+- id: entity-acme
+  query: Acme Robotics
+  expect: [Claude/Graph/Organizations/Acme Robotics.md]
+  accept:
+    - Areas/Finance/Invoices.md
+    - Claude/Sessions/2026-07-03 Budget review.md
+  note: entity note plus its mentions
