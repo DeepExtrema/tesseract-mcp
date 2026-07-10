@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +46,12 @@ def load_state(vault: Vault) -> dict:
 
 
 def save_state(vault: Vault, state: dict) -> None:
-    state_path(vault).write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # temp file + atomic replace: an interrupted write must never leave a
+    # truncated state file behind (it would break status() and the throttle)
+    target = state_path(vault)
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, target)
 
 
 def should_consolidate(
@@ -383,9 +389,14 @@ def main() -> None:
 
 def status(vault: Vault) -> dict:
     """Read-only view of the last sweep for the librarian_status tool."""
-    if not state_path(vault).exists():
+    p = state_path(vault)
+    if not p.exists():
         return {"status": "no sweep yet"}
-    return load_state(vault)
+    try:
+        return load_state(vault)
+    except json.JSONDecodeError as e:
+        return {"status": "state file unreadable",
+                "error": str(e), "path": str(p)}
 
 
 if __name__ == "__main__":

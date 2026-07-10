@@ -50,6 +50,33 @@ def test_state_roundtrip(vault):
     assert librarian.load_state(vault)["last_sweep"] == "2026-07-09 12:00:00"
 
 
+def test_interrupted_save_leaves_previous_state_intact(vault, monkeypatch):
+    """A write that dies mid-file must not corrupt librarian_state.json."""
+    from pathlib import Path
+
+    librarian.save_state(vault, {"last_sweep": "before"})
+    real_write = Path.write_text
+
+    def failing_write(self, content, *args, **kwargs):
+        real_write(self, content[: len(content) // 2], *args, **kwargs)
+        raise OSError("disk full mid-write")
+
+    monkeypatch.setattr(Path, "write_text", failing_write)
+    with pytest.raises(OSError):
+        librarian.save_state(vault, {"last_sweep": "after"})
+    # NOT monkeypatch.undo(): that would also revert conftest's autouse
+    # TESSERACT_STATE_DIR isolation (fixtures share one monkeypatch instance)
+    monkeypatch.setattr(Path, "write_text", real_write)
+    assert librarian.load_state(vault)["last_sweep"] == "before"
+
+
+def test_status_survives_corrupt_state_file(vault):
+    librarian.state_path(vault).write_text("{not json", encoding="utf-8")
+    result = librarian.status(vault)
+    assert result["status"] == "state file unreadable"
+    assert "error" in result
+
+
 def test_first_pass_runs_when_entities_exist():
     due, reason = librarian.should_consolidate({"consolidation": {}}, 3, NOW)
     assert due
