@@ -110,3 +110,12 @@ def test_validate_paths_lenient_returns_missing_map(tmp_path):
     root = _mini_vault(tmp_path)
     qs = [GoldenQuery(id="q1", query="a", expect=["Notes/GONE.md"])]
     assert validate_paths(qs, root, strict=False) == {"q1": ["Notes/GONE.md"]}
+
+
+from tesseract_mcp.evals import FIXTURE_GOLDEN, FIXTURE_VAULT
+
+
+def test_fixture_golden_paths_all_exist():
+    queries = load_golden(FIXTURE_GOLDEN)
+    assert len(queries) == 16
+    assert validate_paths(queries, FIXTURE_VAULT, strict=True) == {}
