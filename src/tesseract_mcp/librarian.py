@@ -18,12 +18,16 @@ from . import embeddings as embeddings_mod
 from . import extractor as extractor_mod
 from . import indexer
 from . import organizer as organizer_mod
-from .vault import Vault
+from .vault import Vault, VaultError
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 STATE_FILE = "librarian_state.json"
 CONSOLIDATE_MIN_NEW_ENTITIES = 15
 CONSOLIDATE_MAX_AGE_DAYS = 14
+LIBRARIAN_NOTE = "Claude/Librarian.md"
+REPORT_MAX_SWEEPS = 30
+_NOTE_SEED = ("# Librarian\n\nCaretaker sweep reports (newest last). "
+              "See constitution.\n")
 MAX_INDEX_ROUNDS = 40
 
 
@@ -187,7 +191,8 @@ def _ensure_cache(vault: Vault, result: dict) -> dict:
 def _sync_manifest_after_moves(vault: Vault, organize_report: dict | None) -> None:
     moved = (organize_report or {}).get("moved") or []
     has_organizer_note = (vault.root / "Claude" / "Organizer.md").is_file()
-    if not moved and not has_organizer_note:
+    has_librarian_note = (vault.root / LIBRARIAN_NOTE).is_file()
+    if not moved and not has_organizer_note and not has_librarian_note:
         return
     manifest = indexer.load_manifest(vault.root)
     changed = False
@@ -211,6 +216,13 @@ def _sync_manifest_after_moves(vault: Vault, organize_report: dict | None) -> No
         if digest and manifest["hashes"].get(rel) != digest:
             manifest["hashes"][rel] = digest
             manifest["failures"].pop(rel, None)
+            changed = True
+    if has_librarian_note:
+        current = indexer.scan_notes(vault)
+        digest = current.get(LIBRARIAN_NOTE)
+        if digest and manifest["hashes"].get(LIBRARIAN_NOTE) != digest:
+            manifest["hashes"][LIBRARIAN_NOTE] = digest
+            manifest["failures"].pop(LIBRARIAN_NOTE, None)
             changed = True
     if changed:
         indexer.save_manifest(manifest, vault.root)
@@ -264,6 +276,90 @@ def _summarize_steps(steps: dict) -> dict:
     return out
 
 
+def format_report(result: dict, now: datetime) -> str:
+    steps = result["steps"]
+    lines = [f"## Sweep {now.strftime('%Y-%m-%d %H:%M')}\n"]
+
+    idx = steps.get("index")
+    if idx is None:
+        lines.append("- index: FAILED\n")
+    elif "pending" in idx:
+        lines.append(f"- index: {idx['pending']} pending (dry-run)\n")
+    else:
+        lines.append(f"- index: processed {idx['processed']}, "
+                     f"failed {idx['failed']}, remaining {idx['remaining']}\n")
+
+    org = steps.get("organize")
+    if org is None:
+        lines.append("- organize: FAILED\n")
+    else:
+        lines.append(f"- organize: moved {len(org['moved'])}, "
+                     f"proposals {len(org['proposals'])}, "
+                     f"skipped {len(org['skipped'])}\n")
+
+    cch = steps.get("cache")
+    if cch is None:
+        lines.append("- cache: FAILED\n")
+    elif cch["rebuilt"]:
+        lines.append(f"- cache: rebuilt ({cch['by']})\n")
+    else:
+        lines.append("- cache: fresh, no rebuild needed\n")
+
+    con = steps.get("consolidate")
+    if con is None:
+        lines.append("- consolidate: FAILED\n")
+    elif con["ran"]:
+        lines.append(f"- consolidate: ran ({con['reason']}) — "
+                     f"{len(con['proposed'])} merge proposals\n")
+    else:
+        lines.append(f"- consolidate: skipped ({con['reason']})\n")
+
+    h = result["health"]
+
+    def mark(ok: bool) -> str:
+        return "✓" if ok else "⚠"
+
+    stale = h.get("stale_embeddings", -1)
+    stale_n = stale if isinstance(stale, int) else -1
+    drift = h.get("manifest_drift", {})
+    drift_n = (len(drift.get("deleted_but_tracked", []))
+               + len(drift.get("present_but_untracked", []))
+               if isinstance(drift, dict) and "error" not in drift else -1)
+    orphans = h.get("orphaned_entities", [])
+    orph_n = len(orphans) if isinstance(orphans, list) else -1
+    cc = h.get("cache_consistency", {})
+    consistent = isinstance(cc, dict) and cc.get("consistent", False)
+    lines.append(
+        f"- health: stale_embeddings {stale_n} {mark(stale_n == 0)} | "
+        f"manifest_drift {drift_n} {mark(drift_n == 0)} | "
+        f"orphaned_entities {orph_n} {mark(orph_n == 0)} | "
+        f"cache_consistency {mark(consistent)} | "
+        f"pending_proposals {h.get('pending_proposals', 0)}\n")
+
+    errs = result["errors"]
+    if errs:
+        lines.append("- errors: "
+                     + ", ".join(f"{k}: {v}" for k, v in errs.items()) + "\n")
+    else:
+        lines.append("- errors: none\n")
+    return "".join(lines)
+
+
+def write_report(vault: Vault, section: str) -> None:
+    try:
+        text = vault.read(LIBRARIAN_NOTE)
+    except VaultError:
+        text = _NOTE_SEED
+    text = text.rstrip("\n") + "\n\n" + section
+    header, *sweeps = text.split("\n## Sweep ")
+    if len(sweeps) > REPORT_MAX_SWEEPS:
+        sweeps = sweeps[-REPORT_MAX_SWEEPS:]
+    text = header + "".join("\n## Sweep " + s for s in sweeps)
+    if not text.endswith("\n"):
+        text += "\n"
+    vault.write(LIBRARIAN_NOTE, text, overwrite=True)
+
+
 def run_sweep(
     vault: Vault,
     extractor=None,
@@ -306,4 +402,6 @@ def run_sweep(
         state["health"] = result["health"]
         state["errors"] = dict(result["errors"])
         save_state(vault, state)
+        write_report(vault, format_report(result, now))
+        _sync_manifest_after_moves(vault, result["steps"].get("organize"))
     return result

@@ -278,3 +278,76 @@ def test_dry_run_touches_nothing(vault, vault_dir):
              for p in sorted(vault_dir.rglob("*")) if p.is_file()}
     assert after == snapshot
     assert librarian.load_state(vault) == state_before
+
+
+def test_format_report_covers_all_steps():
+    result = {
+        "applied": True,
+        "steps": {
+            "index": _counts(processed=3, failed=1),
+            "organize": _org_report(moved=[{"from": "A.md"}],
+                                    proposals=[1, 2], skipped=[1]),
+            "cache": {"rebuilt": True, "by": "index"},
+            "consolidate": {"ran": False, "reason": "2 new entities since last pass; threshold 15", "proposed": []},
+        },
+        "health": {
+            "stale_embeddings": 0,
+            "manifest_drift": {"deleted_but_tracked": [], "present_but_untracked": []},
+            "orphaned_entities": [{"entity": "E", "missing_note": "N"}],
+            "cache_consistency": {"db_entities": 1, "md_entities": 1, "consistent": True},
+            "pending_proposals": 2,
+            "sweep_errors": {},
+        },
+        "errors": {},
+    }
+    text = librarian.format_report(result, NOW)
+    assert text.startswith("## Sweep 2026-07-09 12:00\n")
+    assert "- index: processed 3, failed 1, remaining 0\n" in text
+    assert "- organize: moved 1, proposals 2, skipped 1\n" in text
+    assert "- cache: rebuilt (index)\n" in text
+    assert "- consolidate: skipped (2 new entities since last pass; threshold 15)\n" in text
+    assert "orphaned_entities 1 ⚠" in text
+    assert "stale_embeddings 0 ✓" in text
+    assert "- errors: none\n" in text
+
+
+def test_format_report_failed_step_and_errors():
+    result = {"applied": True,
+              "steps": {"index": None, "organize": _org_report(),
+                        "cache": {"rebuilt": False, "by": "none"},
+                        "consolidate": {"ran": True, "reason": "first pass",
+                                        "proposed": [1]}},
+              "health": {"stale_embeddings": 0, "manifest_drift": {},
+                         "orphaned_entities": [], "cache_consistency":
+                         {"consistent": True}, "pending_proposals": 1,
+                         "sweep_errors": {"index": "RuntimeError: x"}},
+              "errors": {"index": "RuntimeError: x"}}
+    text = librarian.format_report(result, NOW)
+    assert "- index: FAILED\n" in text
+    assert "- consolidate: ran (first pass) — 1 merge proposals\n" in text
+    assert "- errors: index: RuntimeError: x\n" in text
+
+
+def test_write_report_seeds_and_appends(vault):
+    librarian.write_report(vault, "## Sweep 2026-07-09 12:00\n- x\n")
+    text = vault.read(librarian.LIBRARIAN_NOTE)
+    assert text.startswith("# Librarian")
+    assert "## Sweep 2026-07-09 12:00" in text
+
+
+def test_report_trims_to_max_sweeps(vault):
+    for i in range(33):
+        librarian.write_report(vault, f"## Sweep 2026-07-09 12:{i:02d}\n- x\n")
+    text = vault.read(librarian.LIBRARIAN_NOTE)
+    assert text.count("## Sweep") == librarian.REPORT_MAX_SWEEPS
+    assert "12:02" not in text
+    assert "12:03" in text
+    assert "12:32" in text
+
+
+def test_apply_sweep_writes_report(vault):
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    text = vault.read(librarian.LIBRARIAN_NOTE)
+    assert "## Sweep 2026-07-09 12:00" in text
