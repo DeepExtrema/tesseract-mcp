@@ -55,6 +55,13 @@ New notes are filed into the existing folder taxonomy by embedding
 neighbor-vote (≥0.7 agreement moves the note; less queues a human proposal).
 Every move is journaled and reversible.
 
+### The Librarian
+A single scheduled caretaker loop (`python -m tesseract_mcp.librarian <vault>`)
+runs indexing, organizing, cache maintenance, throttled consolidation
+proposals, and health checks in one pass — replacing separate indexer and
+organizer cron jobs. Sweep reports land in `Claude/Librarian.md`; the
+`librarian_status` MCP tool reads the last run.
+
 ### One-command vault provisioning
 `python -m tesseract_mcp.provision <path-to-vault>` installs a pinned plugin
 set, seeds settings (embed model pinned to what the search stack reads), and
@@ -83,6 +90,7 @@ installs the agent conventions tree. `--check` reports version drift.
 | | `graph_stats` | Entity/edge/mention counts |
 | | `consolidate_graph` | Merge duplicate entities (dry-run default) |
 | **Organize** | `organize_vault` | Autonomous filing sweep (dry-run default) |
+| | `librarian_status` | Last caretaker sweep + health report (read-only) |
 | | `undo_move` | Revert a journaled move |
 
 ## Quickstart
@@ -105,6 +113,31 @@ entries are never modified or removed).
 
 Then open the vault once in Obsidian (disable Restricted Mode, complete
 LiveSync setup) and run the `index_brain` tool.
+
+## Scheduled maintenance
+
+The Librarian is the single scheduled task for vault upkeep:
+
+```powershell
+python -m tesseract_mcp.librarian <path-to-vault>
+```
+
+It drains the index backlog, runs the organizer sweep, rebuilds the graph
+cache when needed, proposes consolidation merges (dry-run only), and writes
+a health report to `Claude/Librarian.md`. Use `librarian_status` to read
+the last sweep without running it.
+
+**First run against a real vault must use `--dry-run`** and be human-reviewed
+before scheduling unattended applies — same operational rule as the
+organizer. Dry-run prints the formatted report and JSON result without
+writing state, moves, or throttle baselines.
+
+Model selection for the `claude` extractor backend (ignored by `codex`):
+
+| Env var | Default | Used for |
+|---|---|---|
+| `TESSERACT_EXTRACT_MODEL` | `haiku` | Per-note entity extraction |
+| `TESSERACT_CONSOLIDATE_MODEL` | `sonnet` | Consolidation merge proposals |
 
 ## Going deeper
 
