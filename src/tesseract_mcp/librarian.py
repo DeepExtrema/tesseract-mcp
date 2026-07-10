@@ -189,41 +189,26 @@ def _ensure_cache(vault: Vault, result: dict) -> dict:
     return {"rebuilt": False, "by": "none"}
 
 
-def _sync_manifest_after_moves(vault: Vault, organize_report: dict | None) -> None:
-    moved = (organize_report or {}).get("moved") or []
-    has_organizer_note = (vault.root / "Claude" / "Organizer.md").is_file()
-    has_librarian_note = (vault.root / LIBRARIAN_NOTE).is_file()
-    if not moved and not has_organizer_note and not has_librarian_note:
+def _sync_manifest_caretaker_notes(vault: Vault) -> None:
+    """Keep manifest hashes current for sweep log notes the indexer scans.
+
+    Organizer and Librarian append each sweep; without this sync the next
+    dry-run would perpetually flag them pending."""
+    notes = []
+    if (vault.root / "Claude" / "Organizer.md").is_file():
+        notes.append("Claude/Organizer.md")
+    if (vault.root / LIBRARIAN_NOTE).is_file():
+        notes.append(LIBRARIAN_NOTE)
+    if not notes:
         return
     manifest = indexer.load_manifest(vault.root)
+    current = indexer.scan_notes(vault)
     changed = False
-    for item in moved:
-        src = item.get("from")
-        folder = item.get("to_folder")
-        if not src or not folder:
-            continue
-        stem = src.rsplit("/", 1)[-1]
-        dst = f"{folder}/{stem}"
-        if src in manifest["hashes"]:
-            manifest["hashes"][dst] = manifest["hashes"].pop(src)
-            changed = True
-        if src in manifest["failures"]:
-            manifest["failures"][dst] = manifest["failures"].pop(src)
-            changed = True
-    if has_organizer_note:
-        current = indexer.scan_notes(vault)
-        rel = "Claude/Organizer.md"
+    for rel in notes:
         digest = current.get(rel)
         if digest and manifest["hashes"].get(rel) != digest:
             manifest["hashes"][rel] = digest
             manifest["failures"].pop(rel, None)
-            changed = True
-    if has_librarian_note:
-        current = indexer.scan_notes(vault)
-        digest = current.get(LIBRARIAN_NOTE)
-        if digest and manifest["hashes"].get(LIBRARIAN_NOTE) != digest:
-            manifest["hashes"][LIBRARIAN_NOTE] = digest
-            manifest["failures"].pop(LIBRARIAN_NOTE, None)
             changed = True
     if changed:
         indexer.save_manifest(manifest, vault.root)
@@ -384,8 +369,6 @@ def run_sweep(
         embedder = embeddings_mod.SentenceTransformerEmbedder()
     _step(result, "organize",
           lambda: organizer_mod.run_sweep(vault, embedder, apply=apply))
-    if apply:
-        _sync_manifest_after_moves(vault, result["steps"].get("organize"))
 
     _step(result, "cache", lambda: _ensure_cache(vault, result))
 
@@ -404,7 +387,7 @@ def run_sweep(
         state["errors"] = dict(result["errors"])
         save_state(vault, state)
         write_report(vault, format_report(result, now))
-        _sync_manifest_after_moves(vault, result["steps"].get("organize"))
+        _sync_manifest_caretaker_notes(vault)
     return result
 
 

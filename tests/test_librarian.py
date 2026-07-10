@@ -281,6 +281,29 @@ def test_dry_run_touches_nothing(vault, vault_dir):
     assert librarian.load_state(vault) == state_before
 
 
+def test_consecutive_apply_sweeps_keep_zero_pending(vault):
+    """Each sweep appends to Librarian.md; manifest must track the new hash."""
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    assert librarian._index_preview(vault) == {"pending": 0}
+
+
+def test_apply_sweep_tracks_caretaker_notes_in_manifest(vault, vault_dir):
+    from tesseract_mcp import indexer
+
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    manifest = indexer.load_manifest(vault.root)
+    assert librarian.LIBRARIAN_NOTE in manifest["hashes"]
+    if (vault_dir / "Claude" / "Organizer.md").is_file():
+        assert "Claude/Organizer.md" in manifest["hashes"]
+
+
 def test_format_report_covers_all_steps():
     result = {
         "applied": True,
