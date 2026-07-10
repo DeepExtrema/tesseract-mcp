@@ -293,15 +293,24 @@ def test_consecutive_apply_sweeps_keep_zero_pending(vault):
 
 
 def test_apply_sweep_tracks_caretaker_notes_in_manifest(vault, vault_dir):
-    from tesseract_mcp import indexer
-
     librarian.run_sweep(vault, extractor=FakeExtractor(),
                         consolidator=FakeConsolidator(),
                         embedder=FakeEmbedder(), now=NOW)
     manifest = indexer.load_manifest(vault.root)
     assert librarian.LIBRARIAN_NOTE in manifest["hashes"]
-    if (vault_dir / "Claude" / "Organizer.md").is_file():
-        assert "Claude/Organizer.md" in manifest["hashes"]
+    # the fixture sweep deterministically moves Daily.md, so the move log exists
+    assert (vault_dir / "Claude" / "Organizer.md").is_file()
+    assert "Claude/Organizer.md" in manifest["hashes"]
+
+
+def test_first_apply_sweep_health_reports_no_drift(vault):
+    """Health runs mid-sweep; the just-created Organizer.md must already be
+    synced or the human-reviewed first sweep shows a false manifest_drift ⚠."""
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(), now=NOW)
+    assert result["health"]["manifest_drift"] == {
+        "deleted_but_tracked": [], "present_but_untracked": []}
 
 
 def test_format_report_covers_all_steps():

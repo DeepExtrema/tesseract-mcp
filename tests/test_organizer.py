@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from tesseract_mcp import indexer
 from tesseract_mcp.mover import move_note
 from tesseract_mcp.organizer import (
     ORGANIZER_NOTE,
@@ -153,6 +154,19 @@ def test_undo_twice_raises(org_vault, moved):
 def test_undo_unknown_path_raises(org_vault):
     with pytest.raises(VaultError, match="No undoable move"):
         undo_move(org_vault, "02 - Space/Never Moved.md")
+
+
+def test_undo_transfers_failure_record_back(org_vault, moved):
+    """Undo restores a failing note's retry count to its original path."""
+    manifest = indexer.load_manifest(org_vault.root)
+    manifest["failures"]["02 - Space/Loose Space Note.md"] = {
+        "error": "boom", "attempts": 2}
+    indexer.save_manifest(manifest, org_vault.root)
+    undo_move(org_vault, "02 - Space/Loose Space Note.md")
+    manifest = indexer.load_manifest(org_vault.root)
+    assert "02 - Space/Loose Space Note.md" not in manifest["failures"]
+    assert manifest["failures"]["Loose Space Note.md"] == {
+        "error": "boom", "attempts": 2}
 
 
 class ClusterEmbedder:

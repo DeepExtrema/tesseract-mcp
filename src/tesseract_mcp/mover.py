@@ -66,8 +66,16 @@ def move_note(vault: Vault, old_rel: str, new_rel: str) -> dict:
     dst.parent.mkdir(parents=True, exist_ok=True)
     os.replace(src, dst)
     manifest = indexer.load_manifest(vault.root)
+    changed = False
     if old_rel in manifest["hashes"]:
         manifest["hashes"][new_rel] = manifest["hashes"].pop(old_rel)
+        changed = True
+    if old_rel in manifest["failures"]:
+        # keep the retry count: a note at the attempts cap must not get
+        # fresh extraction attempts just because it moved
+        manifest["failures"][new_rel] = manifest["failures"].pop(old_rel)
+        changed = True
+    if changed:
         indexer.save_manifest(manifest, vault.root)
     return {"from": old_rel, "to": new_rel, "rewrites": rewrites}
 
