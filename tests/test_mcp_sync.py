@@ -6,6 +6,7 @@ import pytest
 from tesseract_mcp.mcp_sync import (
     Classification,
     ConfigParseError,
+    ManifestSpecError,
     MissingVaultError,
     ServerSpec,
     build_add_command,
@@ -34,6 +35,20 @@ def test_load_manifest_parses_specs(tmp_path):
     assert specs[0].name == "fetch"
     assert specs[0].args == ["mcp-server-fetch@2026.6.4"]
     assert specs[0].env == {"PYTHONIOENCODING": "utf-8"}
+
+
+def test_load_manifest_rejects_stdio_without_command(tmp_path):
+    p = _write_manifest(tmp_path, [{"name": "broken", "transport": "stdio"}])
+    with pytest.raises(ManifestSpecError, match="broken"):
+        load_manifest(p)
+
+
+def test_run_sync_aborts_cleanly_on_malformed_manifest(tmp_path, capsys):
+    manifest = _write_manifest(tmp_path, [{"name": "broken"}])
+    rc = run_sync(manifest, tmp_path / "claude.json", repo_root=tmp_path,
+                  vault=None, check_only=True)
+    assert rc == 2
+    assert "ABORT" in capsys.readouterr().out
 
 
 def test_resolve_substitutes_repo_and_vault(tmp_path):

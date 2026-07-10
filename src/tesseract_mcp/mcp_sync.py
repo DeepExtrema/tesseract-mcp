@@ -21,6 +21,10 @@ class MissingVaultError(RuntimeError):
     """A manifest entry needs {VAULT} but no vault path was provided."""
 
 
+class ManifestSpecError(RuntimeError):
+    """A manifest entry is malformed — stdio transport without a command."""
+
+
 @dataclass(frozen=True)
 class ServerSpec:
     name: str
@@ -36,6 +40,11 @@ def load_manifest(path: Path) -> list[ServerSpec]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     specs = []
     for raw in data["servers"]:
+        if not raw.get("url") and not raw.get("command"):
+            raise ManifestSpecError(
+                f"manifest entry {raw.get('name')!r}: stdio transport "
+                "requires a command (or provide a url)"
+            )
         specs.append(ServerSpec(
             name=raw["name"],
             transport=raw.get("transport", "stdio"),
@@ -154,7 +163,7 @@ def run_sync(manifest_path: Path, config_path: Path, repo_root: Path,
         return 2
     try:
         specs = [resolve(s, repo_root, vault) for s in load_manifest(manifest_path)]
-    except MissingVaultError as e:
+    except (ManifestSpecError, MissingVaultError) as e:
         print(f"ABORT (nothing changed): {e}")
         return 2
 
