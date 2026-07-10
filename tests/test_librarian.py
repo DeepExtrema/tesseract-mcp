@@ -1,5 +1,6 @@
 """Tests for the Librarian caretaker loop."""
 
+import sys
 from datetime import datetime, timedelta
 
 import pytest
@@ -351,3 +352,22 @@ def test_apply_sweep_writes_report(vault):
                         embedder=FakeEmbedder(), now=NOW)
     text = vault.read(librarian.LIBRARIAN_NOTE)
     assert "## Sweep 2026-07-09 12:00" in text
+
+
+def test_cli_dry_run_prints_and_exits_zero(vault_dir, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["librarian", str(vault_dir), "--dry-run"])
+    librarian.main()
+    out = capsys.readouterr().out
+    assert "## Sweep" in out
+    assert '"applied": false' in out
+
+
+def test_cli_exits_nonzero_on_step_failure(vault_dir, monkeypatch):
+    def boom(v, emb, apply):
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(librarian.organizer_mod, "run_sweep", boom)
+    monkeypatch.setattr(sys, "argv", ["librarian", str(vault_dir), "--dry-run"])
+    with pytest.raises(SystemExit) as exc:
+        librarian.main()
+    assert exc.value.code == 1

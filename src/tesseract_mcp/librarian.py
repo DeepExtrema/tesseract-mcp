@@ -7,6 +7,7 @@ docs/superpowers/specs/2026-07-09-librarian-design.md.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
 from datetime import datetime
@@ -405,3 +406,23 @@ def run_sweep(
         write_report(vault, format_report(result, now))
         _sync_manifest_after_moves(vault, result["steps"].get("organize"))
     return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Librarian caretaker sweep: index, organize, cache, "
+                    "consolidation proposals, health report.")
+    parser.add_argument("vault", help="Path to the Obsidian vault root")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Report without writing anything")
+    args = parser.parse_args()
+    result = run_sweep(Vault(args.vault), apply=not args.dry_run)
+    if args.dry_run:
+        print(format_report(result, datetime.now()))
+    print(json.dumps(result, indent=2, default=str))
+    if result["errors"]:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()
