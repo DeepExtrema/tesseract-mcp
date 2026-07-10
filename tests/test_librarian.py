@@ -153,3 +153,128 @@ def test_run_health_survives_check_failure(vault, monkeypatch):
     assert health["manifest_drift"] == {"error": "RuntimeError: kaput"}
     assert "orphaned_entities" in health
     assert health["stale_embeddings"] >= 0
+
+
+from tesseract_mcp.extractor import Extraction
+
+
+class FakeExtractor:
+    def extract(self, path, content):
+        return Extraction(entities=[], relations=[])
+
+
+class FakeConsolidator:
+    def __init__(self, merges=None):
+        self.merges = merges or []
+        self.calls = 0
+
+    def complete_json(self, prompt):
+        self.calls += 1
+        return {"merges": self.merges}
+
+
+def _counts(**over):
+    base = {"processed": 0, "entities_created": 0, "entities_merged": 0,
+            "mentions_added": 0, "relations_added": 0,
+            "mentions_retracted": 0, "failed": 0, "skipped": 0, "remaining": 0}
+    base.update(over)
+    return base
+
+
+def _org_report(**over):
+    base = {"moved": [], "proposals": [], "skipped": [], "cache_rebuilt": False}
+    base.update(over)
+    return base
+
+
+def test_pipeline_runs_index_before_organize(vault, monkeypatch):
+    calls = []
+    monkeypatch.setattr(librarian.indexer, "run",
+                        lambda v, e, **k: (calls.append("index"), _counts())[1])
+    monkeypatch.setattr(librarian.organizer_mod, "run_sweep",
+                        lambda v, emb, apply: (calls.append("organize"),
+                                               _org_report())[1])
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    assert calls == ["index", "organize"]
+
+
+def test_drain_index_loops_until_no_remaining(vault, monkeypatch):
+    seq = [_counts(processed=25, remaining=5), _counts(processed=5)]
+    monkeypatch.setattr(librarian.indexer, "run", lambda v, e, **k: seq.pop(0))
+    totals = librarian._drain_index(vault, FakeExtractor())
+    assert totals["processed"] == 30
+    assert totals["remaining"] == 0
+
+
+def test_step_failure_is_isolated(vault, monkeypatch):
+    def boom(v, emb, apply):
+        raise RuntimeError("organize kaput")
+
+    monkeypatch.setattr(librarian.organizer_mod, "run_sweep", boom)
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(), now=NOW)
+    assert result["errors"]["organize"] == "RuntimeError: organize kaput"
+    assert result["steps"]["organize"] is None
+    assert result["steps"]["consolidate"] is not None
+    assert result["health"]["sweep_errors"]["organize"]
+
+
+def test_consolidation_first_pass_sets_baseline(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")
+    fake = FakeConsolidator(merges=[{"type": "organization",
+                                     "canonical": "Acme",
+                                     "duplicates": ["Acme Corp"]}])
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=fake,
+                                 embedder=FakeEmbedder(), now=NOW)
+    step = result["steps"]["consolidate"]
+    assert step["ran"] and step["reason"] == "first pass"
+    assert step["proposed"] == [{"type": "organization", "canonical": "Acme",
+                                 "duplicates": ["Acme Corp"]}]
+    state = librarian.load_state(vault)
+    assert state["consolidation"]["entities_at_last_pass"] == 2
+    assert state["consolidation"]["pending_proposals"] == step["proposed"]
+
+
+def test_consolidation_skipped_below_threshold(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    fake = FakeConsolidator()
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW)
+    assert fake.calls == 1
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW)
+    assert fake.calls == 1
+
+
+def test_apply_sweep_saves_state(vault):
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    state = librarian.load_state(vault)
+    assert state["last_sweep"] == NOW.strftime(librarian.TS_FMT)
+    assert "index" in state["steps"]
+    assert "stale_embeddings" in state["health"]
+
+
+def test_dry_run_touches_nothing(vault, vault_dir):
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    snapshot = {p: p.read_bytes()
+                for p in sorted(vault_dir.rglob("*")) if p.is_file()}
+    state_before = librarian.load_state(vault)
+
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(), apply=False, now=NOW)
+    assert result["applied"] is False
+    assert result["steps"]["index"] == {"pending": 0}
+    after = {p: p.read_bytes()
+             for p in sorted(vault_dir.rglob("*")) if p.is_file()}
+    assert after == snapshot
+    assert librarian.load_state(vault) == state_before
