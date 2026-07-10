@@ -93,6 +93,27 @@ def test_load_golden_missing_file_errors(tmp_path):
         load_golden(tmp_path / "nope.yaml")
 
 
+def test_load_golden_scalar_expect_accept_tags_normalized(tmp_path):
+    """A scalar where a list is expected must become a 1-item list, not
+    be iterated character-by-character."""
+    p = tmp_path / "golden.yaml"
+    p.write_text(
+        "- {id: q1, query: a, expect: Notes/A.md, accept: Notes/B.md, tags: x}\n",
+        encoding="utf-8",
+    )
+    q = load_golden(p)[0]
+    assert q.expect == ["Notes/A.md"]
+    assert q.accept == ["Notes/B.md"]
+    assert q.tags == ["x"]
+
+
+def test_load_golden_non_list_non_scalar_field_errors(tmp_path):
+    p = tmp_path / "golden.yaml"
+    p.write_text("- {id: q1, query: a, expect: {oops: 1}}\n", encoding="utf-8")
+    with pytest.raises(EvalConfigError, match="expect"):
+        load_golden(p)
+
+
 def _mini_vault(tmp_path):
     (tmp_path / "Notes").mkdir()
     (tmp_path / "Notes" / "A.md").write_text("alpha", encoding="utf-8")

@@ -92,6 +92,20 @@ def success_at_k(hits: list[str], relevant: set[str], k: int) -> bool:
 _YAML_FENCE_RE = re.compile(r"```yaml\s*\n(.*?)```", re.DOTALL)
 
 
+def _as_str_list(value, field_name: str, entry: str) -> list[str]:
+    """Normalize a YAML field to a list of strings. A bare scalar becomes a
+    1-item list — iterating it directly would split a string into characters."""
+    if value is None:
+        return []
+    if isinstance(value, (str, int, float)):
+        return [str(value)]
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    raise EvalConfigError(
+        f"golden {entry}: '{field_name}' must be a string or list, got {type(value).__name__}"
+    )
+
+
 def load_golden(path: str | Path) -> list[GoldenQuery]:
     p = Path(path)
     if not p.is_file():
@@ -116,9 +130,9 @@ def load_golden(path: str | Path) -> list[GoldenQuery]:
             GoldenQuery(
                 id=str(item["id"]),
                 query=str(item["query"]),
-                expect=[str(x) for x in item.get("expect") or []],
-                accept=[str(x) for x in item.get("accept") or []],
-                tags=[str(t) for t in item["tags"]] if item.get("tags") else None,
+                expect=_as_str_list(item.get("expect"), "expect", str(item["id"])),
+                accept=_as_str_list(item.get("accept"), "accept", str(item["id"])),
+                tags=_as_str_list(item["tags"], "tags", str(item["id"])) if item.get("tags") else None,
                 folder=str(item["folder"]) if item.get("folder") else None,
                 note=str(item.get("note") or ""),
             )
