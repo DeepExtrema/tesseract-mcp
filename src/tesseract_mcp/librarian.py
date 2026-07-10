@@ -424,5 +424,12 @@ def main() -> None:
         raise SystemExit(1)
 
 
+def status(vault: Vault) -> dict:
+    """Read-only view of the last sweep for the librarian_status tool."""
+    if not state_path(vault).exists():
+        return {"status": "no sweep yet"}
+    return load_state(vault)
+
+
 if __name__ == "__main__":
     main()

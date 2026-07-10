@@ -28,7 +28,7 @@ def test_all_tools_registered():
         "query_notes", "get_backlinks", "list_recent",
         "index_brain", "find_entity", "related_notes", "graph_stats",
         "consolidate_graph", "onboard", "context_bundle",
-        "organize_vault", "undo_move",
+        "organize_vault", "undo_move", "librarian_status",
     }
 
 
@@ -251,3 +251,17 @@ def test_organize_vault_dry_run_default(vault_dir):
 def test_undo_move_tool_raises_cleanly_when_nothing_to_undo():
     with pytest.raises(VaultError, match="No undoable move"):
         server.undo_move("02 - Space/Nope.md")
+
+
+def test_librarian_status_before_first_sweep():
+    assert server.librarian_status() == {"status": "no sweep yet"}
+
+
+def test_librarian_status_after_sweep(vault_dir):
+    from tesseract_mcp import librarian
+    from tesseract_mcp.vault import Vault
+
+    state = librarian.load_state(Vault(vault_dir))
+    state["last_sweep"] = "2026-07-09 12:00:00"
+    librarian.save_state(Vault(vault_dir), state)
+    assert server.librarian_status()["last_sweep"] == "2026-07-09 12:00:00"

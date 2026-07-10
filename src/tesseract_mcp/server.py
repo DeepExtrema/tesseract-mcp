@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, notes, organizer as organizer_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, librarian as librarian_mod, notes, organizer as organizer_mod, tasks as tasks_mod
 from .embeddings import SentenceTransformerEmbedder
 from .extractor import consolidation_extractor, extraction_extractor
 from .vault import Vault, VaultError
@@ -115,6 +115,15 @@ def organize_vault(apply: bool = False) -> dict:
     via undo_move). The scheduled CLI sweep is the autonomous path — see
     constitution → Organizer."""
     return organizer_mod.run_sweep(get_vault(), _get_embedder(), apply=apply)
+
+
+@mcp.tool()
+def librarian_status() -> dict:
+    """Last Librarian caretaker sweep: per-step results, health checks
+    (stale embeddings, manifest drift, orphaned entities, cache consistency),
+    and pending proposal counts. Read-only — the sweep itself runs on a
+    schedule via `python -m tesseract_mcp.librarian`."""
+    return librarian_mod.status(get_vault())
 
 
 @mcp.tool()
@@ -243,6 +252,7 @@ def onboard() -> dict:
         "context_bundle(query, hops?, limit?) — one call: hybrid hits + entities + related notes",
         "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
         "organize_vault(apply?) / undo_move(path) — neighbor-vote filing; dry-run default",
+        "librarian_status() — last caretaker sweep + health report",
     ]
     db = indexer.db_path(get_vault().root)
     if db.exists():
