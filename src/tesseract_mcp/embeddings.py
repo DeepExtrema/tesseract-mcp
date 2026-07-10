@@ -86,3 +86,23 @@ def get_note_vectors(vault: Vault, state_root: Path, embedder: Embedder) -> dict
         _save_fallback_cache(state_root, fallback_cache)
 
     return result
+
+
+def stale_notes(vault: Vault, state_root: Path) -> list[str]:
+    """Rel paths of notes with no fresh Smart Connections vector AND no
+    matching fallback-cache entry — the notes a search would embed inline.
+    Read-only: never computes or caches anything."""
+    sc_vectors = sc_adapter.load_note_vectors(vault)
+    note_texts = _scan_note_texts(vault)
+    fallback_cache = _load_fallback_cache(state_root)
+    stale: list[str] = []
+    for rel, text in note_texts.items():
+        sc_entry = sc_vectors.get(rel)
+        if sc_entry and sc_entry["fresh"]:
+            continue
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        cached = fallback_cache.get(rel)
+        if cached and cached["hash"] == content_hash:
+            continue
+        stale.append(rel)
+    return stale

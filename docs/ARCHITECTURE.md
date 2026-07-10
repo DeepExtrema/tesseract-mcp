@@ -13,7 +13,7 @@ provisioning/organizing layer that operates the vault itself.
 ```mermaid
 flowchart TB
     subgraph "MCP surface"
-        server[server.py — 20 tools]
+        server[server.py — 21 tools]
     end
     subgraph "Retrieval"
         hybrid[hybrid.py — RRF fusion]
@@ -41,6 +41,7 @@ flowchart TB
         organize[organize.py — CLI]
         organizer[organizer.py — neighbor vote]
         mover[mover.py — link-rewriting moves]
+        librarian[librarian.py — caretaker sweep]
     end
     server --> hybrid --> bm25 & emb & search
     emb --> sca
@@ -55,9 +56,12 @@ flowchart TB
     provision --> conventions
     organize --> organizer
     organizer --> mover --> vault
+    librarian --> indexer
+    librarian --> organizer
+    librarian --> consolidate
 ```
 
-`server.py` is a thin FastMCP wrapper: it registers 20 tools and delegates
+`server.py` is a thin FastMCP wrapper: it registers 21 tools and delegates
 every one of them to a plain-Python function in one of the other modules.
 None of the interesting logic lives in `server.py` itself — that keeps the
 MCP-specific plumbing (decorators, docstrings-as-tool-descriptions) separate
@@ -221,13 +225,54 @@ the vault's top-level folders.
   human-readable log line in `Claude/Organizer.md`; `undo_move` reads the
   journal to restore the file, reverse the link rewrites, and mark the
   entry undone.
-- **Running it.** The scheduled/autonomous entry point is the CLI:
-  `python -m tesseract_mcp.organize <vault> [--dry-run]`. Its default
-  behavior is to *apply* moves — that's the intended unattended path — but
-  the very first run against any real vault must be done with `--dry-run`
-  and the output reviewed by a human before ever letting it apply.
+- **Running it.** The organizer sweep is normally invoked by the Librarian
+  caretaker loop (see §6); the standalone CLI
+  `python -m tesseract_mcp.organize <vault> [--dry-run]` remains available
+  for ad-hoc runs. Default behavior is to *apply* moves — that's the
+  intended unattended path — but the very first run against any real vault
+  must be done with `--dry-run` and the output reviewed by a human before
+  ever letting it apply.
 
-## 6. Sync & storage
+## 6. The Librarian
+
+`librarian.py` is a thin orchestrator — one scheduled caretaker loop that
+replaces separate indexer and organizer cron jobs. It owns no indexing,
+organizing, or caching logic of its own; it calls the existing modules in
+sequence and records what happened.
+
+- **The sweep.** `python -m tesseract_mcp.librarian <vault> [--dry-run]`
+  runs index → organize → cache → throttled consolidation proposals →
+  health checks → report. Each step is isolated: a failure in one step
+  records an error, leaves that step's slot as `None`, and lets later steps
+  continue. The CLI exits non-zero when any step failed, so a scheduler can
+  alert on a bad run.
+- **Index drain.** The index step loops `indexer.run` until nothing remains
+  (bounded at 40 rounds), so a single sweep can drain a backlog of
+  changed notes without a separate indexer schedule.
+- **Consolidation throttle.** Consolidation proposals are dry-run only —
+  the Librarian never applies merges. A pass runs when ≥15 new entities have
+  accumulated since the last pass, or when ≥14 days have elapsed with at
+  least one new entity; the first pass runs as soon as any entity exists.
+  Proposals land in state for human review via `consolidate_graph(apply=True)`.
+- **Health checks.** After the sweep steps, six read-only checks run (each
+  survives independently): stale embeddings (notes that would pay an inline
+  embed on the next search), manifest drift (tracked vs. present notes),
+  orphaned entities (graph mentions pointing at missing notes), cache
+  consistency (SQLite entity count vs. markdown), pending proposals (organize
+  + consolidate queues), and sweep errors from the steps themselves.
+- **State and report.** Sweep metadata is persisted to `librarian_state.json`
+  in the per-vault state dir (`~/.tesseract-mcp/<vault-hash>/`). A
+  human-readable report is appended to `Claude/Librarian.md`, trimmed to
+  the most recent 30 `## Sweep` sections. Dry-run touches nothing — no
+  state file, no report note, no moves, no throttle reset.
+- **Model selection.** Per-purpose model env vars apply to the `claude`
+  backend only (`codex` ignores them): `TESSERACT_EXTRACT_MODEL` (default
+  `haiku`) for per-note extraction, `TESSERACT_CONSOLIDATE_MODEL` (default
+  `sonnet`) for consolidation proposals. The read-only `librarian_status`
+  MCP tool returns the last sweep's step summaries, health results, and
+  pending proposal counts.
+
+## 7. Sync & storage
 
 The vault's markdown is the single source of truth for everything: notes,
 entity graph, tasks, the organizer's log. Every other file the server
@@ -247,7 +292,7 @@ infrastructure for that CouchDB instance (a Docker Compose stack fronted by
 Caddy for TLS) lives in `server/`; see [`server/DEPLOY.md`](../server/DEPLOY.md)
 for how to stand it up.
 
-## 7. Module map
+## 8. Module map
 
 | Module | Responsibility |
 |---|---|
@@ -261,6 +306,7 @@ for how to stand it up.
 | `graphstore.py` | Markdown-native graph store: reads and writes entity notes under `Claude/Graph/`. |
 | `hybrid.py` | Hybrid retrieval: BM25 keyword ranking + vector similarity, fused via Reciprocal Rank Fusion. |
 | `indexer.py` | Incremental vault indexing: hash-diff manifest → extract → store → cache. |
+| `librarian.py` | Caretaker sweep: orchestrates index → organize → cache → throttled consolidation proposals → health checks; reports to `Claude/Librarian.md`. |
 | `mcp_sync.py` | Curated MCP server manifest sync — additive registration into Claude Code user scope. |
 | `mover.py` | Moves a vault note while keeping every inbound link resolvable. |
 | `notes.py` | Structured note operations for the `Claude/` subtree (sessions, inbox captures, concepts). |

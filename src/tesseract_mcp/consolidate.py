@@ -9,7 +9,7 @@ from datetime import datetime
 import yaml
 
 from . import cache
-from .extractor import CliExtractor
+from .extractor import consolidation_extractor
 from .graphstore import (
     GRAPH_ROOT,
     MENTIONS_HEADER,
@@ -183,7 +183,7 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true",
                         help="apply proposed merges (default: dry-run)")
     args = parser.parse_args()
-    result = run(Vault(args.vault), CliExtractor(backend=args.backend), apply=args.apply)
+    result = run(Vault(args.vault), consolidation_extractor(backend=args.backend), apply=args.apply)
     print(json.dumps(result, indent=2))
 
 

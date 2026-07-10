@@ -118,9 +118,16 @@ Tell the user: applying styling to the live vault may replicate `.obsidian/` cha
 - [ ] **Step 2: Back up graph.json and the plugin state**
 
 ```powershell
-Copy-Item C:\Vaults\Tesseract\.obsidian\graph.json C:\Vaults\Tesseract\.obsidian\graph.json.bak-2026-07-09
-Copy-Item C:\Vaults\Tesseract\.obsidian\community-plugins.json C:\Vaults\Tesseract\.obsidian\community-plugins.json.bak-2026-07-09 -ErrorAction SilentlyContinue
+Copy-Item C:\Vaults\Tesseract\.obsidian\graph.json `
+  C:\Vaults\Tesseract\.obsidian\graph.json.bak-2026-07-09 -ErrorAction Stop
+if (-not (Test-Path C:\Vaults\Tesseract\.obsidian\graph.json.bak-2026-07-09)) {
+  throw "graph.json backup was not created — STOP, do not proceed"
+}
+Copy-Item C:\Vaults\Tesseract\.obsidian\community-plugins.json `
+  C:\Vaults\Tesseract\.obsidian\community-plugins.json.bak-2026-07-09 -ErrorAction Stop
 ```
+
+Both backups must exist before any provisioning or graph edits. If either copy fails, abort the procedure.
 
 - [ ] **Step 3: Run the provisioner against the live vault**
 
@@ -137,16 +144,16 @@ Edit the `colorGroups` array (backup already taken in Step 2). Target state — 
 
 ```json
 "colorGroups": [
-  { "query": "path:\"Claude/Graph\"", "color": { "a": 1, "rgb": 9130987 } },
+  { "query": "path:\"Claude/Graph\"", "color": { "a": 1, "rgb": 9133302 } },
   { "query": "path:\"Claude\"",        "color": { "a": 1, "rgb": 11167205 } },
-  { "query": "path:\"Job Search\"",    "color": { "a": 1, "rgb": 16098851 } },
-  { "query": "path:\"04 - Customer Discovery\"", "color": { "a": 1, "rgb": 1356201 } },
+  { "query": "path:\"Job Search\"",    "color": { "a": 1, "rgb": 16096803 } },
+  { "query": "path:\"04 - Customer Discovery\"", "color": { "a": 1, "rgb": 1356457 } },
   { "query": "path:\"03 - Parallax-Hermes Initiative\"", "color": { "a": 1, "rgb": 3900150 } },
-  { "query": "path:\"02 - Space (Primary)\"", "color": { "a": 1, "rgb": 14221459 } }
+  { "query": "path:\"02 - Space (Primary)\"", "color": { "a": 1, "rgb": 14221931 } }
 ]
 ```
 
-(rgb ints: violet #8B5CF6=9130987, light-violet #AA65E5≈11167205, amber #F59E23≈16098851, teal #14B2A9≈1356201, blue #3B82F6=3900150, magenta #D9026B≈14221459 — compute each as `int("RRGGBB", 16)` and verify before writing. Preserve every existing key in graph.json other than `colorGroups`; also set `"showOrphans": false`.)
+(rgb ints, each verified as `int("RRGGBB", 16)`: violet #8B5CF6=9133302, light-violet #AA65E5=11167205, amber #F59E23=16096803, teal #14B2A9=1356457, blue #3B82F6=3900150, magenta #D9026B=14221931. Preserve every existing key in graph.json other than `colorGroups`; also set `"showOrphans": false`.)
 
 NOTE: match the existing `03 - Parallax-Hermes…` / `02 - Space…` folder names EXACTLY as they appear in the vault (list top-level dirs first; the sidebar truncated them).
 

@@ -30,15 +30,15 @@ must trace to a number a stranger can reproduce with one command.
 
 ## Architecture
 
-```
+```text
 benchmarks/
   __main__.py    # CLI: run | report | graph
   datasets.py    # download BEIR SciFact + NFCorpus, materialize as markdown vaults
   runner.py      # run ablations (bm25 | vector | hybrid) through the real pipeline
   metrics.py     # thin wrapper over ranx: nDCG@10, Recall@10/@100, MRR@10
   report.py      # results JSON -> markdown table -> inject into README between markers
-  queries/graph-eval.yaml   # hand-curated multi-hop query set (private-vault graph track)
-  results/       # committed JSON, one file per run (dataset, mode, git SHA, date)
+  queries/graph-eval.yaml   # multi-hop query set (private-vault graph track) — gitignored, lives outside the repo
+  results/       # committed JSON for the public BEIR tracks only (dataset, mode, git SHA, date)
 ```
 
 ### datasets.py
@@ -93,10 +93,14 @@ benchmarks/
   on hit-rate and MRR, writing to the same results/ format.
 - Reported in ARCHITECTURE.md under a "Measuring the graph" section with
   explicit small-N caveats — NOT in the headline README table.
+- **Privacy:** query text, note names, and expected note paths are private
+  vault metadata. `graph-eval.yaml` and raw graph-track results stay OUT of
+  git (gitignored; stored in the vault or state dir). Anything committed
+  from this track carries only opaque IDs and aggregate metrics.
 
 ## CLI
 
-```
+```console
 python -m benchmarks run    [--dataset scifact|nfcorpus|all] [--mode bm25|vector|hybrid|all]
 python -m benchmarks report [--force]
 python -m benchmarks graph

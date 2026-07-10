@@ -98,6 +98,7 @@ class CliExtractor:
         timeout: int = 120,
         runner=subprocess.run,
         which=shutil.which,
+        model: str | None = None,
     ):
         self.backend = backend or os.environ.get("TESSERACT_EXTRACTOR", "codex")
         if self.backend not in self.COMMANDS:
@@ -105,6 +106,7 @@ class CliExtractor:
         self.timeout = timeout
         self._run = runner
         self._which = which
+        self.model = model
 
     def _resolve_cmd(self) -> list[str]:
         exe, *args = self.COMMANDS[self.backend]
@@ -113,11 +115,15 @@ class CliExtractor:
             raise ExtractorError(f"{self.backend} CLI not found on PATH")
         low = resolved.lower()
         if low.endswith((".cmd", ".bat")):
-            return ["cmd", "/c", resolved, *args]
-        if low.endswith(".ps1"):
-            return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                    "-File", resolved, *args]
-        return [resolved, *args]
+            cmd = ["cmd", "/c", resolved, *args]
+        elif low.endswith(".ps1"):
+            cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                   "-File", resolved, *args]
+        else:
+            cmd = [resolved, *args]
+        if self.model and self.backend == "claude":
+            cmd += ["--model", self.model]
+        return cmd
 
     def _invoke(self, prompt: str) -> str:
         cmd = self._resolve_cmd()
@@ -178,3 +184,19 @@ class CliExtractor:
     def extract(self, path: str, content: str) -> Extraction:
         prompt = PROMPT_TEMPLATE.format(path=path, content=content)
         return _coerce(self.complete_json(prompt))
+
+
+def extraction_extractor(backend: str | None = None) -> CliExtractor:
+    """Backend for per-note entity extraction (high-volume → cheap model)."""
+    return CliExtractor(
+        backend=backend,
+        model=os.environ.get("TESSERACT_EXTRACT_MODEL", "haiku"),
+    )
+
+
+def consolidation_extractor(backend: str | None = None) -> CliExtractor:
+    """Backend for entity dedupe (judgment-heavy, rare → mid-tier model)."""
+    return CliExtractor(
+        backend=backend,
+        model=os.environ.get("TESSERACT_CONSOLIDATE_MODEL", "sonnet"),
+    )

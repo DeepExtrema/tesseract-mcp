@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tesseract_mcp.embeddings import get_note_vectors
+from tesseract_mcp.embeddings import get_note_vectors, stale_notes
 from tesseract_mcp.sc_adapter import MODEL_KEY
 
 
@@ -66,3 +66,20 @@ def test_fallback_cached_across_calls(vault):
     call_count_after_first = len(embedder.calls)
     get_note_vectors(vault, vault.root, embedder)
     assert len(embedder.calls) == call_count_after_first  # no re-embedding
+
+
+def test_stale_notes_lists_only_uncached_edits(vault, vault_dir, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    get_note_vectors(vault, state, FakeEmbedder())  # warm the fallback cache
+    assert stale_notes(vault, state) == []
+
+    (vault_dir / "Daily.md").write_text("edited content\n", encoding="utf-8")
+    assert stale_notes(vault, state) == ["Daily.md"]
+
+
+def test_stale_notes_does_not_write(vault, vault_dir, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    stale_notes(vault, state)
+    assert not (state / "fallback_embeddings.json").exists()

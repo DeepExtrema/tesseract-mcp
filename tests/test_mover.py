@@ -57,6 +57,19 @@ def test_move_transfers_manifest_key(mv_vault):
     assert manifest["hashes"]["02 - Space/Telemetry.md"] == "abc123"
 
 
+def test_move_transfers_failure_record(mv_vault):
+    """A failing note keeps its retry count when moved — otherwise a note at
+    the MAX_ATTEMPTS skip cap gets fresh paid extraction attempts per move."""
+    manifest = indexer.load_manifest(mv_vault.root)
+    manifest["failures"]["Telemetry.md"] = {"error": "boom", "attempts": 2}
+    indexer.save_manifest(manifest, mv_vault.root)
+    move_note(mv_vault, "Telemetry.md", "02 - Space/Telemetry.md")
+    manifest = indexer.load_manifest(mv_vault.root)
+    assert "Telemetry.md" not in manifest["failures"]
+    assert manifest["failures"]["02 - Space/Telemetry.md"] == {
+        "error": "boom", "attempts": 2}
+
+
 def test_duplicate_stem_detected(mv_vault):
     (mv_vault.root / "02 - Space" / "Clone.md").write_text("a\n", encoding="utf-8")
     (mv_vault.root / "Clone.md").write_text("b\n", encoding="utf-8")

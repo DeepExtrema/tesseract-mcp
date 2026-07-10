@@ -182,8 +182,14 @@ def undo_move(vault: Vault, note_rel: str) -> dict:
         [r["path"] for r in entry["rewrites"]],
     )
     manifest = indexer.load_manifest(vault.root)
+    changed = False
     if entry["to"] in manifest["hashes"]:
         manifest["hashes"][entry["from"]] = manifest["hashes"].pop(entry["to"])
+        changed = True
+    if entry["to"] in manifest["failures"]:
+        manifest["failures"][entry["from"]] = manifest["failures"].pop(entry["to"])
+        changed = True
+    if changed:
         indexer.save_manifest(manifest, vault.root)
     entries[target_idx]["undone"] = True
     jp.write_text(
