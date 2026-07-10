@@ -9,7 +9,7 @@
 
 **Architecture:** Two pre-written, fully-detailed plans live in this repo. This document is the orchestration layer: environment facts, execution order, hard rules, and stop-points. Every code block, test, command, and commit message you need is already in those plans — follow them verbatim.
 
-**Tech Stack:** Python 3.11 (stdlib-only for new code), pytest, existing `tesseract_mcp` package idioms, Obsidian community-plugin pinning via `vault-template/plugins.json`.
+**Tech Stack:** Python ≥3.11 (the `pyproject.toml` `requires-python` contract; the repo venv currently runs 3.14 — always use `.venv\Scripts\python`, never a version you picked yourself), stdlib-only for new code, pytest, existing `tesseract_mcp` package idioms, Obsidian community-plugin pinning via `vault-template/plugins.json`.
 
 ## Environment briefing (read once, trust it)
 
@@ -54,7 +54,7 @@
 
 - [ ] **Step 1:** Execute bundle-plan **Task 4 Steps 1–5**: verify the real `arxiv-mcp-server` pin from PyPI (replace `PIN_ME`), verify both pinned packages launch via `uvx ... --help`, add the CLI test + `main()`, full suite green.
 - [ ] **Step 2:** Execute bundle-plan **Task 4 Step 7** (README + ARCHITECTURE doc updates as written).
-- [ ] **Step 3:** Run `.venv\Scripts\python -m tesseract_mcp.mcp_sync --check` and record its output in your report. Expected: `tesseract` present-or-DRIFTED, `fetch` MISSING, `arxiv` MISSING, exit code 1. **Do NOT run the tool without `--check`.**
+- [ ] **Step 3:** Run `.venv\Scripts\python -m tesseract_mcp.mcp_sync --check` and record its ACTUAL output and exit code in your report. `--check` is read-only and exits 1 exactly when any manifest entry is missing or drifted (0 when clean); the present/DRIFTED/MISSING mix depends on this machine's current `~/.claude.json`, so do not expect a fixed set. **Do NOT run the tool without `--check`.**
 - [ ] **Step 4:** Commit per bundle-plan Task 4 Step 8's message.
 
 **STOP-POINT A: do NOT execute bundle-plan Task 4 Step 6 (the live `mcp_sync` run that registers servers into the user's Claude Code config). That step is reserved for the human.**

@@ -74,12 +74,16 @@ Behavior:
    `claude mcp remove`/`claude mcp add` pair a human would run to fix
    drift.
 
-Error handling:
-- `claude` CLI not on PATH → actionable message ("install Claude Code or
-  run the printed commands manually"), print the commands, exit non-zero,
-  no partial state.
-- A failed `claude mcp add` for one server does not abort the rest; the
-  summary lists per-server outcomes.
+Error handling — two distinct failure classes:
+- **Preflight failures** (config parse error, malformed manifest, `claude`
+  CLI not on PATH) are detected before any `claude mcp add` runs →
+  actionable message ("install Claude Code or run the printed commands
+  manually"), print ALL pending commands, exit non-zero. The zero-write /
+  no-partial-state guarantee applies to this class only.
+- **Per-server add failures** after preflight: partial success is allowed
+  and safe — the tool is additive-only and idempotent, so entries already
+  added stay, the failed one is reported, and re-running the sync picks up
+  where it left off. The summary lists per-server outcomes; exit non-zero.
 
 ### 3. Starter set — RESOLVED 2026-07-09
 
@@ -90,7 +94,7 @@ survey, user-commissioned) was reviewed and the user picked the v1 set:
 |---|---|---|
 | `tesseract` | this clone | The mind database itself. |
 | `mcp-server-fetch` | `==2026.6.4` (PyPI, official) | Web ingest: URL → clean markdown — the missing "web clipper" stage of the knowledge-base loop (cf. Karpathy's LLM Knowledge Bases post, Apr 2026). stdio, no API key. Windows: set `PYTHONIOENCODING=utf-8` in the entry's env. |
-| `arxiv-mcp-server` | latest pinned exact at implementation time (PyPI ~0.4.12+, blazickjp) | Paper ingest: arXiv search/download → markdown. Treat paper content as untrusted input; do not chain with shell/filesystem tools unguarded. |
+| `arxiv-mcp-server` | `==0.5.0` (PyPI, blazickjp; resolved at implementation time — authoritative pin lives in `mcp-servers.json`) | Paper ingest: arXiv search/download → markdown. Treat paper content as untrusted input; do not chain with shell/filesystem tools unguarded. |
 
 Explicitly excluded, with rationale recorded in the manifest's `why` notes as
 bench-triggers for future promotion:

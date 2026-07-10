@@ -47,9 +47,13 @@ the rest.
    organizer's vote is nearly free.
 2. **Organize** — the existing neighbor-vote filing pass, applying moves
    (journal/undo/proposals rails unchanged).
-3. **Cache rebuild** — guarantee the SQLite graph cache was rebuilt exactly
-   once this sweep (the organizer already rebuilds when it moved anything;
-   the Librarian ensures it happened, not per-step).
+3. **Cache rebuild** — ensure the SQLite graph cache exists and reflects
+   this sweep. Ownership: the index and organize steps each rebuild only
+   when they changed data (the organizer's report exposes `cache_rebuilt`);
+   the Librarian adds a rebuild only when neither did and the db is
+   missing. A sweep where both index and organize changed data rebuilds
+   after each — correct, since each rebuild reflects the newer state and
+   rebuilds are cheap, idempotent derived-state operations.
 4. **Consolidation (throttled, dry-run)** — see below.
 5. **Health checks** — read-only inspections (below).
 6. **Report** — dated section appended to `Claude/Librarian.md` + machine

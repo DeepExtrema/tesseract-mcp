@@ -1372,13 +1372,13 @@ git commit -m "feat(server): read-only librarian_status tool"
 
 3. In the mermaid diagram's "Provision and organize" subgraph, add:
 
-```
+```mermaid
         librarian[librarian.py — caretaker sweep]
 ```
 
 and the edges:
 
-```
+```mermaid
     librarian --> indexer
     librarian --> organizer
     librarian --> consolidate
