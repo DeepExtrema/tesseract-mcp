@@ -98,6 +98,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Source-checkout layout (src/tesseract_mcp/evals.py -> repo root). The
+# fixture paths only make sense in a checkout, not an installed wheel;
+# this harness is a repo-local dev tool.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_VAULT = REPO_ROOT / "evals" / "vault"
 FIXTURE_GOLDEN = REPO_ROOT / "evals" / "golden.yaml"
@@ -275,7 +278,7 @@ Also add `GoldenQuery` to the existing import from `tesseract_mcp.evals` at the 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_evals.py -q`
-Expected: 6 pass (Task 1), 8 FAIL with ImportError on `load_golden`.
+Expected: one collection ERROR (`ImportError: cannot import name 'load_golden'`), no tests run — the module-level import fails at collection, so pytest reports an error for the whole file rather than individual failures. That is the correct red state.
 
 - [ ] **Step 3: Implement loader and validation** (append to `evals.py`; add `import re` and `import yaml` to the imports block)
 
@@ -684,7 +687,7 @@ Expected: 15 passed.
 - [ ] **Step 6: Verify git actually sees the fixture files**
 
 Run: `git status --porcelain evals/ | head -5`
-Expected: `??` (or `A`) lines for `evals/` files. If `.gitignore` swallows them (it has vault-related rules), append this line to `.gitignore` and re-check:
+Expected: `??` (or `A`) lines for `evals/` files — the current `.gitignore` has no rule matching `evals/`, so this is a pure sanity check. Only if some future ignore rule swallows them, append this line to `.gitignore` and re-check:
 
 ```
 !evals/vault/
@@ -790,7 +793,7 @@ def test_run_evals_accept_counts_for_rank_not_recall(tmp_path, monkeypatch):
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_evals.py -q`
-Expected: 15 pass, 5 FAIL with ImportError on `run_evals`.
+Expected: one collection ERROR (`ImportError: cannot import name 'run_evals'`), no tests run — module-level import fails at collection. That is the correct red state.
 
 - [ ] **Step 3: Implement the runner** (append to `evals.py`; add `from . import hybrid` and `from .vault import Vault` to imports)
 
@@ -804,6 +807,9 @@ def run_evals(
     limit: int = RETRIEVE_LIMIT,
     lenient: bool = False,
 ) -> Scorecard:
+    # A fresh state dir must not crash the first fallback-cache save
+    # (embeddings._save_fallback_cache writes without mkdir).
+    Path(state_root).mkdir(parents=True, exist_ok=True)
     missing = validate_paths(queries, vault.root, strict=not lenient)
     results: list[QueryResult] = []
     for q in queries:
@@ -932,56 +938,70 @@ def test_main_live_without_env_exits_2(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("TESSERACT_VAULT_PATH", raising=False)
     rc = main(["--live"])
     assert rc == 2
+
+
+def test_main_missing_vault_exits_2(tmp_path, monkeypatch, capsys):
+    # Vault.__init__ raises VaultError for a nonexistent root; the CLI
+    # must map that to the exit-2 config-error contract, not a traceback.
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    rc = main(["--vault", str(tmp_path / "nope"),
+               "--golden", str(tmp_path / "missing.yaml")])
+    assert rc == 2
+    assert "error:" in capsys.readouterr().err
 ```
 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_evals.py -q`
-Expected: 20 pass, 6 FAIL with ImportError.
+Expected: one collection ERROR (`ImportError: cannot import name 'append_history'`), no tests run — module-level import fails at collection. That is the correct red state.
 
-- [ ] **Step 3: Implement CLI + output + history** (append to `evals.py`; extend imports with `import argparse`, `import json`, `import os`, `import subprocess`, `import sys`, `import time`, and `from . import indexer`)
+- [ ] **Step 3: Implement CLI + output + history** (append to `evals.py`; extend imports with `import argparse`, `import json`, `import os`, `import subprocess`, `import sys`, `import time`, and `from . import indexer`; change the Task 4 vault import to `from .vault import Vault, VaultError`)
 
 ```python
 def format_table(sc: Scorecard) -> str:
-    lines = [f"{'id':<28} {'rank':>4} {'r@10':>5}  miss"]
+    # Derive k values from the scorecard so custom ks never KeyError.
+    kmax = max(sc.recall_at)
+    lines = [f"{'id':<28} {'rank':>4} {'r@' + str(kmax):>5}  miss"]
     for r in sc.results:
         if r.skipped:
             lines.append(f"{r.id:<28} {'skip':>4} {'-':>5}  {', '.join(r.missing)}")
             continue
         rank = str(r.first_rank) if r.first_rank else "-"
         lines.append(
-            f"{r.id:<28} {rank:>4} {r.recall_at[10]:>5.2f}  {', '.join(r.missing)}"
+            f"{r.id:<28} {rank:>4} {r.recall_at[kmax]:>5.2f}  {', '.join(r.missing)}"
         )
     scored = len(sc.results) - sc.skipped
+    agg = "  ".join(
+        f"success@{k} {sc.success_at[k]:.2f}" for k in sorted(sc.success_at)
+    )
+    agg += "  " + "  ".join(
+        f"recall@{k} {sc.recall_at[k]:.2f}" for k in sorted(sc.recall_at)
+    )
     lines.append("-" * 60)
     lines.append(
-        f"queries {scored}  skipped {sc.skipped}  "
-        f"success@5 {sc.success_at[5]:.2f}  success@10 {sc.success_at[10]:.2f}  "
-        f"recall@5 {sc.recall_at[5]:.2f}  recall@10 {sc.recall_at[10]:.2f}  "
-        f"MRR {sc.mrr:.2f}"
+        f"queries {scored}  skipped {sc.skipped}  {agg}  MRR {sc.mrr:.2f}"
     )
     return "\n".join(lines)
 
 
 def to_json(sc: Scorecard) -> dict:
-    return {
-        "success_at_5": sc.success_at[5],
-        "success_at_10": sc.success_at[10],
-        "recall_at_5": sc.recall_at[5],
-        "recall_at_10": sc.recall_at[10],
-        "mrr": sc.mrr,
-        "skipped": sc.skipped,
-        "queries": [
-            {
-                "id": r.id,
-                "first_rank": r.first_rank,
-                "skipped": r.skipped,
-                "recall_at_10": r.recall_at.get(10),
-                "missing": r.missing,
-            }
-            for r in sc.results
-        ],
-    }
+    kmax = max(sc.recall_at)
+    d: dict = {f"success_at_{k}": v for k, v in sorted(sc.success_at.items())}
+    d.update({f"recall_at_{k}": v for k, v in sorted(sc.recall_at.items())})
+    d["mrr"] = sc.mrr
+    d["skipped"] = sc.skipped
+    d["n_queries"] = len(sc.results)
+    d["queries"] = [
+        {
+            "id": r.id,
+            "first_rank": r.first_rank,
+            "skipped": r.skipped,
+            "recall": r.recall_at.get(kmax),
+            "missing": r.missing,
+        }
+        for r in sc.results
+    ]
+    return d
 
 
 def _git_sha() -> str | None:
@@ -991,7 +1011,7 @@ def _git_sha() -> str | None:
             capture_output=True, text=True, timeout=5,
         )
         return out.stdout.strip() or None
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
@@ -1027,7 +1047,8 @@ def main(argv=None) -> int:
     p.add_argument("--vault", help="vault root (default: fixture corpus)")
     p.add_argument("--golden", help="golden file (default: evals/golden.yaml)")
     p.add_argument("--live", action="store_true",
-                   help="use TESSERACT_VAULT_PATH and Claude/Evals.md")
+                   help="use TESSERACT_VAULT_PATH and Claude/Evals.md "
+                        "(takes precedence over --vault/--golden)")
     p.add_argument("--json", action="store_true", dest="as_json")
     p.add_argument("--no-history", action="store_true")
     p.add_argument("--init-live", action="store_true",
@@ -1057,7 +1078,7 @@ def main(argv=None) -> int:
             vault, indexer.state_dir(vault.root), _make_embedder(),
             queries, lenient=lenient,
         )
-    except EvalConfigError as e:
+    except (EvalConfigError, VaultError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     print(json.dumps(to_json(sc), indent=2) if args.as_json else format_table(sc))
@@ -1080,7 +1101,7 @@ def init_live(vault: Vault) -> tuple[Path, bool]:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python -m pytest tests/test_evals.py -q`
-Expected: 26 passed.
+Expected: 27 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1137,7 +1158,7 @@ def test_main_init_live_uses_env_vault(tmp_path, monkeypatch, capsys):
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_evals.py -q`
-Expected: 26 pass, 2 FAIL (stub raises / ImportError on `init_live` export is fine too).
+Expected: 27 pass, 2 FAIL (the Task 5 stub raises `EvalConfigError`; the import itself succeeds, so these are real test failures, not a collection error).
 
 - [ ] **Step 3: Replace the stub with the real implementation**
 
@@ -1171,7 +1192,7 @@ def init_live(vault: Vault) -> tuple[Path, bool]:
 - [ ] **Step 4: Run the whole suite**
 
 Run: `.venv\Scripts\python -m pytest -q`
-Expected: all tests pass (existing suite + 28 eval tests), no regressions.
+Expected: all tests pass (existing suite + 29 eval tests), no regressions.
 
 - [ ] **Step 5: Commit**
 
@@ -1261,3 +1282,4 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - **Spec coverage:** metrics/locked definitions → Task 1+4; yaml+md-fence loading, strict/lenient validation → Task 2; fixture corpus with all query lanes incl. `%` fallback and granularity traps → Task 3; production-path runner → Task 4; CLI flags, exit codes, history jsonl, `TESSERACT_STATE_DIR` honored → Task 5; `Claude/Evals.md` + `--init-live` never-overwrite → Task 6; env-guarded floors, baseline record, fix-fixture-not-floor rule → Task 7. Non-goals untouched. No gaps found.
 - **Placeholder scan:** none — every step has full code/content; the one intentional stub (`init_live` in Task 5) is explicit, tested around, and replaced in Task 6.
 - **Type consistency:** `run_evals(vault, state_root, embedder, queries, ks, limit, lenient)` used identically in Tasks 4, 5, 7; `Scorecard`/`QueryResult` field names match across `format_table`, `to_json`, tests; `_make_embedder` referenced via `evals_mod._make_embedder` in tests matching the module-level def.
+- **Post-review fixes applied (external code review, 2026-07-10):** `run_evals` now mkdirs `state_root` (fresh state dir crashed `embeddings._save_fallback_cache` otherwise — this broke 8 planned tests including the gate); `main` catches `VaultError` alongside `EvalConfigError` to honor the exit-2 contract (+1 CLI test); red-step expectations for Tasks 2/4/5 corrected to pytest *collection errors* (module-level imports fail before any test runs); `_git_sha` also catches `subprocess.SubprocessError`; formatters derive k from the scorecard instead of hardcoding 5/10; history records gained `n_queries`. Cumulative test counts: 6 → 14 → 15 → 20 → 27 → 29 (+1 env-guarded gate).
