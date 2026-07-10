@@ -1,5 +1,6 @@
 """Tests for the Librarian caretaker loop."""
 
+import json
 import sys
 from datetime import datetime, timedelta
 
@@ -160,7 +161,11 @@ from tesseract_mcp.extractor import Extraction
 
 
 class FakeExtractor:
+    def __init__(self):
+        self.calls = []
+
     def extract(self, path, content):
+        self.calls.append(path)
         return Extraction(entities=[], relations=[])
 
 
@@ -282,7 +287,8 @@ def test_dry_run_touches_nothing(vault, vault_dir):
 
 
 def test_consecutive_apply_sweeps_keep_zero_pending(vault):
-    """Each sweep appends to Librarian.md; manifest must track the new hash."""
+    """Each sweep appends to Librarian.md; the scan exclusion keeps the log
+    from ever counting as pending index work."""
     librarian.run_sweep(vault, extractor=FakeExtractor(),
                         consolidator=FakeConsolidator(),
                         embedder=FakeEmbedder(), now=NOW)
@@ -292,25 +298,45 @@ def test_consecutive_apply_sweeps_keep_zero_pending(vault):
     assert librarian._index_preview(vault) == {"pending": 0}
 
 
-def test_apply_sweep_tracks_caretaker_notes_in_manifest(vault, vault_dir):
+def test_apply_sweep_keeps_caretaker_notes_out_of_manifest(vault, vault_dir):
+    """The indexer never scans the caretaker logs, so no sweep may write
+    their hashes to the manifest (raw file: load_manifest prunes on load)."""
     librarian.run_sweep(vault, extractor=FakeExtractor(),
                         consolidator=FakeConsolidator(),
                         embedder=FakeEmbedder(), now=NOW)
-    manifest = indexer.load_manifest(vault.root)
-    assert librarian.LIBRARIAN_NOTE in manifest["hashes"]
+    raw = json.loads((indexer.state_dir(vault.root) / "manifest.json")
+                     .read_text(encoding="utf-8"))
+    assert librarian.LIBRARIAN_NOTE not in raw["hashes"]
     # the fixture sweep deterministically moves Daily.md, so the move log exists
     assert (vault_dir / "Claude" / "Organizer.md").is_file()
-    assert "Claude/Organizer.md" in manifest["hashes"]
+    assert "Claude/Organizer.md" not in raw["hashes"]
 
 
 def test_first_apply_sweep_health_reports_no_drift(vault):
-    """Health runs mid-sweep; the just-created Organizer.md must already be
-    synced or the human-reviewed first sweep shows a false manifest_drift ⚠."""
+    """Health runs mid-sweep; the just-created Organizer.md is excluded from
+    scans, or the human-reviewed first sweep shows a false manifest_drift ⚠."""
     result = librarian.run_sweep(vault, extractor=FakeExtractor(),
                                  consolidator=FakeConsolidator(),
                                  embedder=FakeEmbedder(), now=NOW)
     assert result["health"]["manifest_drift"] == {
         "deleted_but_tracked": [], "present_but_untracked": []}
+
+
+def test_out_of_sweep_undo_move_never_reaches_extractor(vault):
+    """undo_move appends to Claude/Organizer.md outside any sweep; the next
+    sweep must not feed the move log to the paid extractor."""
+    first = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                consolidator=FakeConsolidator(),
+                                embedder=FakeEmbedder(), now=NOW)
+    move = first["steps"]["organize"]["moved"][0]
+    moved_rel = f"{move['to_folder']}/{move['from'].rsplit('/', 1)[-1]}"
+    librarian.organizer_mod.undo_move(vault, moved_rel)
+
+    fx = FakeExtractor()
+    librarian.run_sweep(vault, extractor=fx,
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    assert "Claude/Organizer.md" not in fx.calls
 
 
 def test_format_report_covers_all_steps():

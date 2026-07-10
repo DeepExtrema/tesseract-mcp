@@ -18,6 +18,10 @@ from .vault import Vault, VaultError
 DEFAULT_IGNORE = ("copilot",)
 DEFAULT_BATCH = 25
 MAX_ATTEMPTS = 3
+# Caretaker sweep logs (organizer moves/proposals, librarian reports),
+# appended outside sweeps too (undo_move, the organize_vault tool) —
+# extracting them would mint graph entities from log lines.
+CARETAKER_NOTES = frozenset({"Claude/Organizer.md", "Claude/Librarian.md"})
 
 
 def state_dir(vault_root: str | Path | None = None) -> Path:
@@ -54,6 +58,9 @@ def load_manifest(vault_root: str | Path | None = None) -> dict:
     for rel, val in list(manifest.get("failures", {}).items()):
         if isinstance(val, str):
             manifest["failures"][rel] = {"error": val, "attempts": 1}
+    for rel in CARETAKER_NOTES:  # tracked before the scan exclusion existed
+        manifest.get("hashes", {}).pop(rel, None)
+        manifest.get("failures", {}).pop(rel, None)
     return manifest
 
 
@@ -71,7 +78,8 @@ def scan_notes(vault: Vault, ignore: tuple[str, ...] = DEFAULT_IGNORE) -> dict[s
         if SKIP_DIRS & set(rel_parts):
             continue
         rel = "/".join(rel_parts)
-        if rel.startswith(GRAPH_ROOT + "/") or rel_parts[0] in ignore:
+        if (rel.startswith(GRAPH_ROOT + "/") or rel in CARETAKER_NOTES
+                or rel_parts[0] in ignore):
             continue
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         hashes[rel] = digest

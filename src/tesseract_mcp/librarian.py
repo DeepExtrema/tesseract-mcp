@@ -189,33 +189,6 @@ def _ensure_cache(vault: Vault, result: dict) -> dict:
     return {"rebuilt": False, "by": "none"}
 
 
-def _sync_manifest_caretaker_notes(vault: Vault) -> None:
-    """Keep manifest hashes current for sweep log notes the indexer scans.
-
-    Organizer and Librarian append each sweep; without this sync the next
-    dry-run would perpetually flag them pending — and the next apply sweep
-    would feed the logs to the paid extractor, minting junk graph entities
-    from move records and health reports."""
-    notes = []
-    if (vault.root / organizer_mod.ORGANIZER_NOTE).is_file():
-        notes.append(organizer_mod.ORGANIZER_NOTE)
-    if (vault.root / LIBRARIAN_NOTE).is_file():
-        notes.append(LIBRARIAN_NOTE)
-    if not notes:
-        return
-    manifest = indexer.load_manifest(vault.root)
-    current = indexer.scan_notes(vault)
-    changed = False
-    for rel in notes:
-        digest = current.get(rel)
-        if digest and manifest["hashes"].get(rel) != digest:
-            manifest["hashes"][rel] = digest
-            manifest["failures"].pop(rel, None)
-            changed = True
-    if changed:
-        indexer.save_manifest(manifest, vault.root)
-
-
 def _consolidate_step(
     vault: Vault, state: dict, consolidator, now: datetime, apply: bool
 ) -> dict:
@@ -371,10 +344,6 @@ def run_sweep(
         embedder = embeddings_mod.SentenceTransformerEmbedder()
     _step(result, "organize",
           lambda: organizer_mod.run_sweep(vault, embedder, apply=apply))
-    if apply:
-        # sync now so health (below) doesn't flag the just-written
-        # Organizer.md as manifest drift; idempotent with the post-report call
-        _sync_manifest_caretaker_notes(vault)
 
     _step(result, "cache", lambda: _ensure_cache(vault, result))
 
@@ -393,7 +362,6 @@ def run_sweep(
         state["errors"] = dict(result["errors"])
         save_state(vault, state)
         write_report(vault, format_report(result, now))
-        _sync_manifest_caretaker_notes(vault)
     return result
 
 
