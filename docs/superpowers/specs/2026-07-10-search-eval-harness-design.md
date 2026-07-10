@@ -142,6 +142,31 @@ job), 2 = configuration/validation error.
 - Model download failure surfaces as-is (sentence-transformers error);
   the harness adds no retry logic.
 
+## Relationship to the IR benchmark harness (2026-07-09 spec)
+
+`docs/superpowers/specs/2026-07-09-ir-benchmarks-design.md` (approved a
+day before this one, discovered at integration time) defines a
+complementary but distinct layer: BEIR public corpora (SciFact,
+NFCorpus) run through the same pipeline with ranx metrics and ablation
+modes, producing *publishable, literature-comparable* numbers for the
+README. The two do not collide in files (`benchmarks/` + top-level
+package vs. `evals/` + `src/tesseract_mcp/evals.py`) and serve different
+questions:
+
+| | IR benchmarks (2026-07-09) | This eval harness (2026-07-10) |
+|---|---|---|
+| Question | "Is this retrieval engine good, objectively?" | "Did my last change make *my vault's* search better or worse?" |
+| Corpus | BEIR public datasets, thousands of docs | 20-note synthetic fixture + private live-vault set |
+| Metrics | ranx nDCG@10, Recall@10/100, MRR@10 | hand-rolled success@k, recall@k, MRR |
+| Cost per run | Minutes (large corpora) | Seconds |
+| Role | Publishable scoreboard, ablations | Pre-commit regression gate, trend history |
+
+If both ship, a later consolidation could have the benchmark runner
+reuse this harness's golden-set loader for its private graph track
+(`queries/graph-eval.yaml` is schema-compatible with our golden format
+minus `tags`/`folder`). Deliberately not done now — neither spec blocks
+the other.
+
 ## Non-goals
 
 - nDCG / graded relevance judgments (binary expect/accept is enough for
