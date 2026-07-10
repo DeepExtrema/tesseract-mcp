@@ -279,8 +279,30 @@ def _make_embedder():
     return SentenceTransformerEmbedder()
 
 
+LIVE_TEMPLATE = '''# Search eval golden set (live vault)
+
+Queries for `python -m tesseract_mcp.evals --live`. Paths are
+vault-relative. Stale paths are skipped and reported here, never fatal:
+this vault legitimately drifts. Add a query whenever a search annoys
+you -- that is the whole curation strategy.
+
+```yaml
+- id: example-constitution
+  query: what are the rules for agents writing to the vault
+  expect:
+    - Claude/README.md
+  note: seed example -- replace or extend freely
+```
+'''
+
+
 def init_live(vault: Vault) -> tuple[Path, bool]:
-    raise EvalConfigError("--init-live not implemented yet")
+    target = Path(vault.root) / LIVE_GOLDEN_REL
+    if target.exists():
+        return target, False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(LIVE_TEMPLATE, encoding="utf-8")
+    return target, True
 
 
 def main(argv=None) -> int:

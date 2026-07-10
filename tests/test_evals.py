@@ -266,3 +266,31 @@ def test_main_missing_vault_exits_2(tmp_path, monkeypatch, capsys):
                "--golden", str(tmp_path / "missing.yaml")])
     assert rc == 2
     assert "error:" in capsys.readouterr().err
+
+
+from tesseract_mcp.evals import init_live
+
+
+def test_init_live_creates_template_and_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    root = tmp_path / "vault"
+    root.mkdir()
+    vault = Vault(root)
+    target, created = init_live(vault)
+    assert created is True and target.is_file()
+    assert load_golden(target)[0].id == "example-constitution"
+    marker = "USER EDIT"
+    target.write_text(target.read_text(encoding="utf-8") + marker,
+                      encoding="utf-8")
+    target2, created2 = init_live(vault)
+    assert created2 is False
+    assert marker in target2.read_text(encoding="utf-8")
+
+
+def test_main_init_live_uses_env_vault(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "vault"
+    root.mkdir()
+    monkeypatch.setenv("TESSERACT_VAULT_PATH", str(root))
+    assert main(["--init-live"]) == 0
+    assert "created" in capsys.readouterr().out
+    assert (root / "Claude" / "Evals.md").is_file()
