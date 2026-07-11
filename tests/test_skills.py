@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
-EXPECTED = {"recall", "digest"}
+EXPECTED = {"recall", "digest", "resume", "connections"}
 
 
 def _frontmatter(path: Path) -> dict:
