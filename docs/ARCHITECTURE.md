@@ -319,3 +319,13 @@ for how to stand it up.
 | `server.py` | FastMCP server exposing the Tesseract vault to Claude. |
 | `tasks.py` | Task operations compatible with the Obsidian Tasks plugin format. |
 | `vault.py` | Filesystem access to the Obsidian vault with safety rules (path containment, `Claude/` write quarantine). |
+
+## Appendix: the worker-thread import stall (2026-07-11)
+
+`server.main()` calls `_warm_start()` before `mcp.run()` to construct the
+embedder — forcing sentence_transformers/torch/numpy imports and the model
+load onto the main thread. Without it, the first heavy C-extension import
+inside a FastMCP tool worker thread (Python 3.14, Windows, mcp 1.28.x)
+does not complete until the *next* client message arrives on stdin, so
+single tool calls time out indefinitely. `scripts/probe_server.py` is the
+regression guard: one search_brain request over stdio, no wake-up message.

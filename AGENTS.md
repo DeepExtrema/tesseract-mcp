@@ -20,3 +20,14 @@
 - On Windows, `mcp_sync` resolves the `claude` CLI via `shutil.which` (injectable in tests) so npm's `claude.cmd` shim is found.
 - Obsidian plugin pins must use release tags whose manifest version matches the tag (avoids provision idempotency drift and LiveSync churn).
 - (Migrated 2026-07-09 from the retired Sentinal-ESG workspace, where early tesseract work happened.)
+
+## MCP server rule: no lazy heavy imports in tool bodies
+
+Never import C-extension chains (numpy, torch, sentence_transformers)
+inside an MCP tool body or anything a tool calls lazily. On Python 3.14 +
+Windows, the first such import inside the FastMCP worker thread stalls
+until the next stdin message arrives — the server appears to hang forever
+on single requests (root-caused 2026-07-11; see the audit session log in
+the vault). Eager-import at server startup in the main thread instead:
+`server._warm_start()` exists for exactly this. Verify with
+`python scripts/probe_server.py`.
