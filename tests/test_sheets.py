@@ -65,3 +65,43 @@ def test_malformed_schema_refuses(sheet_vault, vault_dir):
     )
     with pytest.raises(SheetError, match="alien"):
         sheets.load_schema(sheet_vault, "Job Search/Applications")
+
+
+def test_norm_str_and_link():
+    assert sheets.norm_str("  Adobe   Inc ") == sheets.norm_str("adobe inc")
+    a = sheets.normalize_link("HTTPS://Jobs.Example.com/p/123/?utm_source=li&x=1#frag")
+    b = sheets.normalize_link("https://jobs.example.com/p/123?x=1")
+    assert a == b
+
+
+VALID = {"company": "Adobe", "role": "SWE Intern", "status": "Saved"}
+
+
+def test_validate_accepts_valid(sheet_vault):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    assert sheets.validate_fields(s, VALID, require_required=True) == VALID
+
+
+@pytest.mark.parametrize("fields,fragment", [
+    ({**VALID, "recruiter": "Bob"}, "recruiter"),          # undeclared
+    ({**VALID, "status": "applied"}, "applied"),            # bad enum (case-sensitive)
+    ({**VALID, "date_applied": "07/11/2026"}, "YYYY-MM-DD"),
+    ({**VALID, "sponsorship_required": "yes"}, "bool"),
+    ({**VALID, "company": "x" * 121}, "max_length"),
+    ({"company": "Adobe", "status": "Saved"}, "role"),      # missing required
+])
+def test_validate_rejects(sheet_vault, fields, fragment):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    with pytest.raises(SheetError, match=fragment):
+        sheets.validate_fields(s, fields, require_required=True)
+
+
+def test_validate_patch_mode_skips_required(sheet_vault):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    out = sheets.validate_fields(s, {"status": "Applied"}, require_required=False)
+    assert out == {"status": "Applied"}
+
+
+def test_standard_metadata_always_allowed(sheet_vault):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    sheets.validate_fields(s, {**VALID, "tags": ["job"]}, require_required=True)

@@ -8,7 +8,9 @@ docs/superpowers/specs/2026-07-11-structured-sheets-design.md
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .search import SKIP_DIRS, parse_frontmatter
 from .vault import Vault
@@ -16,6 +18,10 @@ from .vault import Vault
 SCHEMA_FILE = "_schema.md"
 STANDARD_COLUMNS = {"created", "agent", "project", "tags"}
 COLUMN_TYPES = {"string", "enum", "date", "bool", "url", "number"}
+
+_WS = re.compile(r"\s+")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_TRACKING = re.compile(r"^(utm_.*|ref|src|gh_src|lever-origin)$")
 
 
 class SheetError(Exception):
@@ -98,3 +104,66 @@ def get_schema(vault: Vault, sheet_name: str) -> Schema:
 
 def is_sheet_folder(vault: Vault, folder_rel: str) -> bool:
     return vault.resolve(f"{folder_rel}/{SCHEMA_FILE}").is_file()
+
+
+def norm_str(s: str) -> str:
+    return _WS.sub(" ", str(s)).strip().casefold()
+
+
+def normalize_link(url: str) -> str:
+    parts = urlsplit(str(url).strip())
+    query = sorted(
+        (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+        if not _TRACKING.match(k)
+    )
+    return urlunsplit((
+        parts.scheme.lower(), parts.netloc.lower(),
+        parts.path.rstrip("/") or "/", urlencode(query), "",
+    ))
+
+
+def _check_value(name: str, col: Column, value) -> None:
+    if col.type == "enum":
+        if value not in (col.values or []):
+            raise SheetError(
+                f"Field '{name}': expected one of {col.values}, got '{value}'.")
+        return
+    if col.type == "date":
+        if not isinstance(value, str) or not _DATE.match(value):
+            raise SheetError(
+                f"Field '{name}': expected date YYYY-MM-DD, got '{value}'.")
+        return
+    if col.type == "bool":
+        if not isinstance(value, bool):
+            raise SheetError(f"Field '{name}': expected bool, got '{value!r}'.")
+        return
+    if col.type == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise SheetError(f"Field '{name}': expected number, got '{value!r}'.")
+        return
+    # string / url
+    if not isinstance(value, str):
+        raise SheetError(f"Field '{name}': expected {col.type}, got '{value!r}'.")
+    if col.max_length and len(value) > col.max_length:
+        raise SheetError(
+            f"Field '{name}': exceeds max_length {col.max_length} "
+            f"({len(value)} chars).")
+
+
+def validate_fields(schema: Schema, fields: dict, *, require_required: bool) -> dict:
+    for name, value in fields.items():
+        if name in STANDARD_COLUMNS:
+            continue
+        col = schema.columns.get(name)
+        if col is None:
+            raise SheetError(
+                f"Field '{name}' is not declared in sheet '{schema.name}' "
+                f"(columns: {sorted(schema.columns)}; standard: "
+                f"{sorted(STANDARD_COLUMNS)}).")
+        _check_value(name, col, value)
+    if require_required:
+        missing = [n for n, c in schema.columns.items()
+                   if c.required and n not in fields]
+        if missing:
+            raise SheetError(f"Missing required field(s): {missing}.")
+    return fields
