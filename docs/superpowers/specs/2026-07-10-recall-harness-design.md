@@ -64,18 +64,20 @@ Vault (NEW conventions only)  ── Claude/Answers/  rendered recall outputs
 
 ### Vault conventions
 
-- `/recall` answers file to `Claude/Answers/YYYY-MM-DD-<slug>.md` with
+- `/recall` answers file to `Claude/Answers/YYYY-MM-DD <question slug>.md`
+  (space-separated, matching the `Claude/Sessions/` naming convention) with
   frontmatter: `type: answer`, `question: "..."`; every claim cited as a
-  `[[wikilink]]` to its source note.
+  `[[wikilink]]` to its source note. `/resume --save` milestone snapshots
+  (`type: resume`) also live here.
 - Digests file to `Claude/Digests/YYYY-MM-DD.md` — a separate folder because
   it is a ritual surface: newest digest = morning inbox in Obsidian.
 - Both folders live inside the `Claude/` quarantine, so with zero new code:
   writes are permitted, the Librarian indexes them into hybrid search, and
   the extractor pulls their entities/wikilinks into the graph. Past answers
   become retrievable context for future questions.
-- `type: answer` frontmatter is the anti-echo-chamber valve: if answers ever
-  pollute retrieval, filters can exclude them. The filter is not built now;
-  the tag makes it possible later.
+- `type:` frontmatter (`answer`, `resume`, `digest`) is the anti-echo-chamber
+  valve: if filed outputs ever pollute retrieval, filters can exclude them by
+  type. The filter is not built now; the tags make it possible later.
 - Conventions are added to the conventions installer
   (`scripts/install_conventions.py`) and documented in the vault constitution.
 - Skills are versioned in the repo (`skills/`) and synced to
@@ -111,7 +113,9 @@ Vault (NEW conventions only)  ── Claude/Answers/  rendered recall outputs
 1. `recall_bundle(mode="digest", since=<last digest date>)` → new/changed
    notes, inbox captures awaiting triage, open + newly completed tasks,
    Librarian last-sweep health, pending organizer proposals, entities that
-   gained new edges.
+   gained new edges (approximated deterministically as `Claude/Graph/`
+   entity notes modified in the window — a new edge always touches its
+   entity note).
 2. Compose `Claude/Digests/YYYY-MM-DD.md` with a **fixed section order** (the
    eye learns where to look), ending with **"Suggested questions"** — 2–3
    questions the vault is newly equipped to answer, each pasteable into
@@ -183,7 +187,8 @@ tomorrow's ingest and queries.
 - `recall_bundle`: pytest against the existing fixtures vault — section
   population, `since` filtering, resume project-matching, per-section
   degradation.
-- Skills: manual QA checklist per skill (they are prompts, not code).
+- Skills: manual first-week QA — run each skill against the live vault and
+  iterate on format (they are prompts, not code; no automated harness).
 - Deferred, once the loop runs for real: citation-rate check on `/recall`
   answers over golden queries, reusing the evals harness.
 - Digest scheduling follows the Librarian operational rule: manual first,

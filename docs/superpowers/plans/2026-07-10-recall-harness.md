@@ -14,7 +14,7 @@
 - Run Python as `.venv\Scripts\python`; tests as `.venv\Scripts\python -m pytest -q` (PowerShell).
 - Tests must never touch the live vault (`C:\Vaults\Tesseract`), the real `~/.tesseract-mcp`, or the real `~/.claude/skills`. `tests/conftest.py` already isolates `TESSERACT_STATE_DIR`; skill-sync tests must pass explicit tmp `src`/`dest`.
 - All agent vault writes land under `Claude/` only; nothing in this plan touches the `confirm_outside_claude` path.
-- `skill_sync` is additive by default (never modifies existing entries without `--force`) — same philosophy as `mcp_sync`. Agents run it only with `--check`; a real sync to `~/.claude/skills` requires explicit user consent (AGENTS.md rule).
+- `skill_sync` is additive by default (never modifies existing entries without `--force`) — same philosophy as `mcp_sync`. **Consent rule (stated here, mirrored in AGENTS.md's learned preferences): agents run it only with `--check`; a real sync to `~/.claude/skills` requires Taimoor's explicit consent** — same operational rule as `mcp_sync` without `--check`.
 - Commit style: `type(scope): message` (see `git log`).
 - New MCP tool docstrings follow the existing style: purpose first sentence, behavioral details after.
 - Exact spec values: digest default window **7 days**; `since` format **YYYY-MM-DD**; answer notes `Claude/Answers/YYYY-MM-DD <question slug>.md` with frontmatter `type: answer` + `question:`; digest notes `Claude/Digests/YYYY-MM-DD.md` with `type: digest`; filing rule "file what compounds, skip what expires".
@@ -110,6 +110,15 @@ def test_digest_proposals_default_zero_without_sweep(vault):
     bundle = recall.digest_bundle(vault)
     assert bundle["proposals"]["pending"] == 0
     assert bundle["proposals"]["detail_note"] == "Claude/Organizer.md"
+
+
+def test_digest_proposals_reads_last_sweep_health(vault):
+    # a real post-sweep state file (written to the isolated TESSERACT_STATE_DIR)
+    state = recall.librarian_mod.load_state(vault)
+    state["health"] = {"pending_proposals": 3}
+    recall.librarian_mod.save_state(vault, state)
+    bundle = recall.digest_bundle(vault)
+    assert bundle["proposals"]["pending"] == 3
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -211,14 +220,14 @@ def digest_bundle(
 ```
 
 Notes for the implementer:
-- `_vault_files` is package-internal reuse (same pattern as `cache.py` importing `parse_frontmatter` from `search.py`); it already applies `SKIP_DIRS` so dotfolders are excluded.
+- `_vault_files` is package-internal reuse (same pattern as `cache.py` importing `parse_frontmatter` from `search.py`); it already applies `SKIP_DIRS` (`.obsidian`, `.trash`, `.git`).
 - `_vault_files(vault, "Claude/Inbox")` on a missing folder yields nothing (pathlib glob swallows the missing dir) — no special-casing needed.
 - `librarian.status` returns `{"status": "no sweep yet"}` when no sweep has run; `_proposals` handles that because `state.get("health")` is `None` → `{}` → `pending` defaults to 0.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python -m pytest tests/test_recall.py -q`
-Expected: 7 passed.
+Expected: 8 passed.
 
 - [ ] **Step 5: Run the whole suite (no regressions)**
 
@@ -315,6 +324,27 @@ def test_resume_entities_without_graph_cache(vault):
     bundle = recall.resume_bundle(vault, "tesseract")
     assert bundle["entities"]["status"] == "ok"
     assert bundle["entities"]["entities"] == []
+
+
+def test_resume_entities_with_populated_graph_cache(vault, vault_dir):
+    from tesseract_mcp import cache, indexer
+
+    graph_dir = vault_dir / "Claude" / "Graph" / "Projects"
+    graph_dir.mkdir(parents=True)
+    (graph_dir / "Tesseract.md").write_text(
+        "---\nentity: project\naliases: [tesseract-mcp]\n---\n\n"
+        "# Tesseract\n\nThe mind database project.\n",
+        encoding="utf-8",
+    )
+    cache.rebuild(vault, indexer.db_path(vault.root))
+    bundle = recall.resume_bundle(vault, "tesseract")
+    assert bundle["entities"]["status"] == "ok"
+    assert bundle["entities"]["entities"] == [{
+        "name": "Tesseract",
+        "type": "project",
+        "path": "Claude/Graph/Projects/Tesseract.md",
+        "summary": "The mind database project.",
+    }]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -324,7 +354,7 @@ Expected: new tests FAIL with `AttributeError: module 'tesseract_mcp.recall' has
 
 - [ ] **Step 3: Write the implementation**
 
-Append to `src/tesseract_mcp/recall.py` (and extend the imports at the top of the file to include the two new ones shown here):
+Append to `src/tesseract_mcp/recall.py` (and extend the imports at the top of the file to include the three new ones shown here):
 
 ```python
 from .indexer import db_path
@@ -411,7 +441,7 @@ Note: matching is deliberately a case-folded substring over frontmatter `project
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python -m pytest tests/test_recall.py -q`
-Expected: 12 passed.
+Expected: 14 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -574,7 +604,8 @@ In `vault/constitution.md`, insert two bullets in `## Structure` immediately aft
   question (`YYYY-MM-DD <question slug>.md`, frontmatter `type: answer` and
   `question:`). Every claim cites its source note as a `[[wikilink]]`;
   model-knowledge additions are labeled *(not from the vault)*. Past answers
-  are legitimate retrieval sources — that is the point.
+  are legitimate retrieval sources — that is the point. `/resume --save`
+  milestone snapshots (`type: resume`) also live here.
 - `Claude/Digests/` — one review digest per run (`YYYY-MM-DD.md`, frontmatter
   `type: digest`) written by `/digest`: librarian health, captures to triage,
   tasks, recent changes, pending proposals, new graph activity, suggested
@@ -620,6 +651,8 @@ Create `tests/test_skill_sync.py`:
 
 ```python
 """skill_sync: additive by default, --force to update, --check writes nothing."""
+
+import pytest
 
 from tesseract_mcp import skill_sync
 
@@ -689,6 +722,16 @@ def test_ignores_dirs_without_skill_md(tmp_path):
     (src / "not-a-skill").mkdir(parents=True)
     result = skill_sync.sync(src=src, dest=dest)
     assert result == {"installed": [], "updated": [], "up_to_date": [], "drift": []}
+
+
+def test_cli_fails_fast_when_repo_skills_missing(tmp_path, monkeypatch):
+    # wheel installs don't package skills/ — the CLI must not report an
+    # empty success (same fail-fast philosophy as mcp_sync's manifest check)
+    monkeypatch.setattr(skill_sync, "REPO_SKILLS", tmp_path / "missing")
+    monkeypatch.setattr("sys.argv", ["skill_sync", "--check"])
+    with pytest.raises(SystemExit) as exc:
+        skill_sync.main()
+    assert exc.value.code == 2  # argparse parser.error
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -770,7 +813,13 @@ def main() -> None:
     parser.add_argument("--dest", default=None,
                         help="target skills dir (default ~/.claude/skills)")
     args = parser.parse_args()
-    result = sync(dest=args.dest, force=args.force, check=args.check)
+    if not REPO_SKILLS.is_dir():
+        # installed wheels don't package skills/ — fail fast instead of
+        # printing an empty success (mcp_sync does the same for its manifest)
+        parser.error(
+            f"skills directory not found: {REPO_SKILLS} (run from a source checkout)"
+        )
+    result = sync(src=REPO_SKILLS, dest=args.dest, force=args.force, check=args.check)
     print(json.dumps(result, indent=2))
     if args.check and (result["installed"] or result["drift"]):
         raise SystemExit(1)
@@ -783,7 +832,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python -m pytest tests/test_skill_sync.py -q`
-Expected: 7 passed.
+Expected: 8 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1180,7 +1229,10 @@ they require Taimoor's explicit go-ahead in an interactive session:
    Taimoor says go).
 3. `.venv\Scripts\python -m tesseract_mcp.skill_sync` — installs the four
    skills into the real `~/.claude/skills`. Agents may only run `--check`.
-4. Run `/recall` and `/digest` manually for about a week to iterate on
+4. Restart the tesseract MCP server (and start fresh Claude Code / Cowork
+   sessions) so `recall_bundle` is visible — running sessions hold the old
+   tool list.
+5. Run `/recall` and `/digest` manually for about a week to iterate on
    format before any scheduling.
-5. Then schedule the daily digest (Claude Code scheduled agent / cron) and
+6. Then schedule the daily digest (Claude Code scheduled agent / cron) and
    consider the citation-rate eval over golden queries (deferred by spec).
