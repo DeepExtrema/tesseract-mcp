@@ -71,6 +71,15 @@ def load_schema(vault: Vault, folder_rel: str) -> Schema:
             values=[str(v) for v in spec["values"]] if spec.get("values") else None,
             max_length=spec.get("max_length"),
         )
+    for field_name in ("key", "identity"):
+        if field_name == "identity" and field_name not in meta:
+            continue
+        value = meta[field_name] if field_name == "key" else meta.get("identity", [])
+        if not isinstance(value, list):
+            raise SheetError(
+                f"{folder_rel}/{SCHEMA_FILE}: field '{field_name}' expected list, "
+                f"got {value!r}."
+            )
     return Schema(
         name=str(meta["sheet"]),
         folder=folder_rel,

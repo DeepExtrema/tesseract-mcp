@@ -67,6 +67,16 @@ def test_malformed_schema_refuses(sheet_vault, vault_dir):
         sheets.load_schema(sheet_vault, "Job Search/Applications")
 
 
+def test_scalar_key_raises(sheet_vault, vault_dir):
+    (vault_dir / "Job Search" / "Applications" / "_schema.md").write_text(
+        "---\nsheet: jobs\nfilename: \"{company}\"\nkey: company\ncolumns:\n"
+        "  company: {type: string, required: true}\n---\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SheetError, match="key"):
+        sheets.load_schema(sheet_vault, "Job Search/Applications")
+
+
 def test_norm_str_and_link():
     assert sheets.norm_str("  Adobe   Inc ") == sheets.norm_str("adobe inc")
     a = sheets.normalize_link("HTTPS://Jobs.Example.com/p/123/?utm_source=li&x=1#frag")
