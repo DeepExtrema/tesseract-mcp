@@ -45,6 +45,7 @@ Rules for every AI agent writing to this vault. Read this before writing.
   `question:`). Every claim cites its source note as a `[[wikilink]]`;
   model-knowledge additions are labeled *(not from the vault)*. Past answers
   are legitimate retrieval sources — that is the point.
+  `/resume --save` milestone snapshots (`type: resume`) also live here.
 - `Claude/Digests/` — one review digest per run (`YYYY-MM-DD.md`, frontmatter
   `type: digest`) written by `/digest`: librarian health, captures to triage,
   tasks, recent changes, pending proposals, new graph activity, suggested

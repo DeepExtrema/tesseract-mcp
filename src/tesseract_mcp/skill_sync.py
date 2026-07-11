@@ -67,7 +67,13 @@ def main() -> None:
     parser.add_argument("--dest", default=None,
                         help="target skills dir (default ~/.claude/skills)")
     args = parser.parse_args()
-    result = sync(dest=args.dest, force=args.force, check=args.check)
+    if not REPO_SKILLS.is_dir():
+        # installed wheels don't package skills/ — fail fast instead of
+        # printing an empty success (mcp_sync does the same for its manifest)
+        parser.error(
+            f"skills directory not found: {REPO_SKILLS} (run from a source checkout)"
+        )
+    result = sync(src=REPO_SKILLS, dest=args.dest, force=args.force, check=args.check)
     print(json.dumps(result, indent=2))
     if args.check and (result["installed"] or result["drift"]):
         raise SystemExit(1)

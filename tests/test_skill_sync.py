@@ -1,5 +1,7 @@
 """skill_sync: additive by default, --force to update, --check writes nothing."""
 
+import pytest
+
 from tesseract_mcp import skill_sync
 
 
@@ -68,3 +70,13 @@ def test_ignores_dirs_without_skill_md(tmp_path):
     (src / "not-a-skill").mkdir(parents=True)
     result = skill_sync.sync(src=src, dest=dest)
     assert result == {"installed": [], "updated": [], "up_to_date": [], "drift": []}
+
+
+def test_cli_fails_fast_when_repo_skills_missing(tmp_path, monkeypatch):
+    # wheel installs don't package skills/ — the CLI must not report an
+    # empty success (same fail-fast philosophy as mcp_sync's manifest check)
+    monkeypatch.setattr(skill_sync, "REPO_SKILLS", tmp_path / "missing")
+    monkeypatch.setattr("sys.argv", ["skill_sync", "--check"])
+    with pytest.raises(SystemExit) as exc:
+        skill_sync.main()
+    assert exc.value.code == 2  # argparse parser.error

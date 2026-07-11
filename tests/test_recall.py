@@ -74,6 +74,15 @@ def test_digest_proposals_default_zero_without_sweep(vault):
     assert bundle["proposals"]["detail_note"] == "Claude/Organizer.md"
 
 
+def test_digest_proposals_reads_last_sweep_health(vault):
+    # a real post-sweep state file (written to the isolated TESSERACT_STATE_DIR)
+    state = recall.librarian_mod.load_state(vault)
+    state["health"] = {"pending_proposals": 3}
+    recall.librarian_mod.save_state(vault, state)
+    bundle = recall.digest_bundle(vault)
+    assert bundle["proposals"]["pending"] == 3
+
+
 def _write_session(vault_dir, name, project, created, body):
     (vault_dir / "Claude" / "Sessions" / name).write_text(
         f"---\ncreated: {created}\nagent: claude\n"
@@ -140,3 +149,24 @@ def test_resume_entities_without_graph_cache(vault):
     bundle = recall.resume_bundle(vault, "tesseract")
     assert bundle["entities"]["status"] == "ok"
     assert bundle["entities"]["entities"] == []
+
+
+def test_resume_entities_with_populated_graph_cache(vault, vault_dir):
+    from tesseract_mcp import cache, indexer
+
+    graph_dir = vault_dir / "Claude" / "Graph" / "Projects"
+    graph_dir.mkdir(parents=True)
+    (graph_dir / "Tesseract.md").write_text(
+        "---\nentity: project\naliases: [tesseract-mcp]\n---\n\n"
+        "# Tesseract\n\nThe mind database project.\n",
+        encoding="utf-8",
+    )
+    cache.rebuild(vault, indexer.db_path(vault.root))
+    bundle = recall.resume_bundle(vault, "tesseract")
+    assert bundle["entities"]["status"] == "ok"
+    assert bundle["entities"]["entities"] == [{
+        "name": "Tesseract",
+        "type": "project",
+        "path": "Claude/Graph/Projects/Tesseract.md",
+        "summary": "The mind database project.",
+    }]
