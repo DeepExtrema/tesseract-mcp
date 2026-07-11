@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import cache, indexer
 from . import embeddings as embeddings_mod
+from . import sheets
 from .mover import duplicate_stem_exists, move_note, reverse_rewrites
 from .search import parse_frontmatter
 from .vault import Vault, VaultError
@@ -43,7 +44,15 @@ def discover_taxonomy(vault: Vault) -> list[str]:
     return sorted(
         p.name for p in vault.root.iterdir()
         if p.is_dir() and p.name not in EXCLUDED_DIRS and not p.name.startswith(".")
+        and not sheets.is_sheet_folder(vault, p.name)
     )
+
+
+def _in_sheet_folder(vault: Vault, rel: str) -> bool:
+    parts = rel.split("/")
+    if len(parts) < 2:
+        return False
+    return sheets.is_sheet_folder(vault, "/".join(parts[:-1]))
 
 
 def _wants_organizing(vault: Vault, rel: str) -> bool:
@@ -69,7 +78,7 @@ def iter_candidates(vault: Vault) -> list[str]:
     )
     return [
         rel for rel in root_notes + iter_organized(vault)
-        if _wants_organizing(vault, rel)
+        if _wants_organizing(vault, rel) and not _in_sheet_folder(vault, rel)
     ]
 
 

@@ -29,7 +29,7 @@ def test_all_tools_registered():
         "index_brain", "find_entity", "related_notes", "graph_stats",
         "consolidate_graph", "onboard", "context_bundle",
         "organize_vault", "undo_move", "librarian_status",
-        "recall_bundle",
+        "recall_bundle", "sheet_upsert", "sheet_query", "sheet_schema",
     }
 
 
@@ -300,3 +300,18 @@ def test_main_warm_starts_before_run(monkeypatch):
     monkeypatch.setattr(server.mcp, "run", lambda: order.append("run"))
     server.main()
     assert order == ["warm", "run"]
+
+
+def test_sheet_tools_smoke(vault_dir, monkeypatch):
+    folder = vault_dir / "Records"
+    folder.mkdir()
+    (folder / "_schema.md").write_text(
+        "---\nsheet: things\nfilename: \"{name}\"\nkey: [name]\n"
+        "columns:\n  name: {type: string, required: true}\n"
+        "  when: {type: date}\n---\nFile one note per thing.\n",
+        encoding="utf-8")
+    out = server.sheet_upsert("things", {"name": "First"})
+    assert out["result"] == "created"
+    rows = server.sheet_query("things", {"when": {"missing": True}})
+    assert rows[0]["name"] == "First"
+    assert "things" in server.sheet_schema()

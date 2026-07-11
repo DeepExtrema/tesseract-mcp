@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, librarian as librarian_mod, notes, organizer as organizer_mod, recall as recall_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, librarian as librarian_mod, notes, organizer as organizer_mod, recall as recall_mod, sheets as sheets_mod, tasks as tasks_mod
 from .embeddings import SentenceTransformerEmbedder
 from .extractor import consolidation_extractor, extraction_extractor
 from .vault import Vault, VaultError
@@ -156,6 +156,32 @@ def recall_bundle(
             raise VaultError("mode='resume' requires project")
         return recall_mod.resume_bundle(vault, project)
     raise VaultError(f"mode must be 'digest' or 'resume', got {mode!r}")
+
+
+@mcp.tool()
+def sheet_upsert(sheet: str, fields: dict, body: str | None = None) -> dict:
+    """Create or update one row in a registered sheet (a human-blessed folder
+    with _schema.md). Validates every field against the schema; finds the
+    existing row by key + posting identity; patches only the passed fields.
+    Returns created|updated, the path, and a changed map."""
+    return sheets_mod.upsert(get_vault(), sheet, fields, body=body)
+
+
+@mcp.tool()
+def sheet_query(sheet: str, filters: dict | None = None,
+                sort: dict | None = None, limit: int = 50) -> list[dict]:
+    """Typed query over a sheet's rows. Filters: {column: {op: value}} with
+    ops eq/ne/lt/lte/gt/gte/contains/missing/in/nin, AND-composed.
+    Example — follow-ups due: {"next_follow_up": {"lte": "2026-07-11"},
+    "status": {"nin": ["Rejected", "Ghosted", "Withdrawn"]}}."""
+    return sheets_mod.query(get_vault(), sheet, filters, sort=sort, limit=limit)
+
+
+@mcp.tool()
+def sheet_schema(sheet: str | None = None) -> dict:
+    """No arg: list registered sheets (folder + row count). With a sheet
+    name: full contract — columns, types, key, filing instructions."""
+    return sheets_mod.schema_info(get_vault(), sheet)
 
 
 @mcp.tool()

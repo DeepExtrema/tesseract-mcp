@@ -21,6 +21,7 @@ from . import embeddings as embeddings_mod
 from . import extractor as extractor_mod
 from . import indexer
 from . import organizer as organizer_mod
+from . import sheets as sheets_mod
 from .vault import Vault, VaultError
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -129,6 +130,23 @@ def count_pending_proposals(
     return n
 
 
+def count_invalid_sheet_rows(vault: Vault) -> int:
+    total = 0
+    for _name, folder in sheets_mod.discover_sheets(vault).items():
+        schema = sheets_mod.load_schema(vault, folder)
+        for _rel, meta in sheets_mod.iter_rows(vault, schema):
+            try:
+                sheets_mod.validate_fields(
+                    schema,
+                    {k: v for k, v in meta.items()
+                     if k not in sheets_mod.STANDARD_COLUMNS},
+                    require_required=True,
+                )
+            except sheets_mod.SheetError:
+                total += 1
+    return total
+
+
 def run_health(
     vault: Vault,
     state: dict,
@@ -144,6 +162,7 @@ def run_health(
         "cache_consistency": lambda: check_cache_consistency(vault),
         "pending_proposals": lambda: count_pending_proposals(
             state, organize_report, consolidate_result),
+        "invalid_sheet_rows": lambda: count_invalid_sheet_rows(vault),
         "sweep_errors": lambda: dict(errors),
     }
     out: dict = {}
@@ -308,11 +327,14 @@ def format_report(result: dict, now: datetime) -> str:
     orph_n = len(orphans) if isinstance(orphans, list) else -1
     cc = h.get("cache_consistency", {})
     consistent = isinstance(cc, dict) and cc.get("consistent", False)
+    invalid_rows = h.get("invalid_sheet_rows", -1)
+    invalid_n = invalid_rows if isinstance(invalid_rows, int) else -1
     lines.append(
         f"- health: stale_embeddings {stale_n} {mark(stale_n == 0)} | "
         f"manifest_drift {drift_n} {mark(drift_n == 0)} | "
         f"orphaned_entities {orph_n} {mark(orph_n == 0)} | "
         f"cache_consistency {mark(consistent)} | "
+        f"invalid_sheet_rows {invalid_n} {mark(invalid_n == 0)} | "
         f"pending_proposals {h.get('pending_proposals', 0)}\n")
 
     errs = result["errors"]

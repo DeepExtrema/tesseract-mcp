@@ -254,3 +254,15 @@ def test_dot_directories_never_taxonomy(org_vault):
     touched = [m["from"] for m in report["moved"]] + [p["path"] for p in report["proposals"]]
     assert not any(t.startswith(".claude/") for t in touched)
     assert (org_vault.root / ".claude" / "commands" / "day.md").is_file()
+
+
+def test_organizer_skips_sheet_folders(org_vault, tmp_path):
+    folder = tmp_path / "Records"
+    folder.mkdir()
+    (folder / "_schema.md").write_text(
+        "---\nsheet: things\nfilename: \"{name}\"\nkey: [name]\n"
+        "columns:\n  name: {type: string}\n---\n", encoding="utf-8")
+    (folder / "Row.md").write_text("---\nname: Row\n---\n", encoding="utf-8")
+    vault = Vault(tmp_path)
+    assert all("Records/" not in c for c in iter_candidates(vault))
+    assert "Records" not in discover_taxonomy(vault)
