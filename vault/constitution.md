@@ -80,6 +80,21 @@ Rules for every AI agent writing to this vault. Read this before writing.
 - When extending an existing note, append; don't reorder or rewrite what a
   human wrote.
 
+## Sheets
+
+Some folders outside Claude/ are **sheets**: structured records the human
+has opened to agents by placing a `_schema.md` in them. Three write classes:
+
+| Where | Rule |
+|---|---|
+| `Claude/` | agents write freely |
+| Sheet folders (`_schema.md` present) | writes only via `sheet_upsert`, schema-validated |
+| Everything else | explicit human request only (`confirm_outside_claude`) |
+
+Discover contracts with `sheet_schema`. One note per row; never delete
+rows — states like Withdrawn/Rejected exist instead. The schema file is
+human-owned: propose changes in prose, never edit it.
+
 ## Organizer
 
 Standing permission (granted by Taimoor, 2026-07-08): the organizer may
