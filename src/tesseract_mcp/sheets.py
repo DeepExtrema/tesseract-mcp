@@ -176,3 +176,67 @@ def validate_fields(schema: Schema, fields: dict, *, require_required: bool) -> 
         if missing:
             raise SheetError(f"Missing required field(s): {missing}.")
     return fields
+
+
+_FILENAME_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def iter_rows(vault: Vault, schema: Schema) -> list[tuple[str, dict]]:
+    folder = vault.resolve(schema.folder)
+    rows: list[tuple[str, dict]] = []
+    for path in sorted(folder.glob("*.md")):
+        if path.name == SCHEMA_FILE or not path.is_file():
+            continue
+        rel = f"{schema.folder}/{path.name}"
+        rows.append((rel, parse_frontmatter(
+            path.read_text(encoding="utf-8", errors="ignore"))))
+    return rows
+
+
+def render_filename(schema: Schema, fields: dict) -> str:
+    rendered = schema.filename.format(
+        **{k: str(fields.get(k, "")) for k in schema.columns})
+    rendered = _FILENAME_ILLEGAL.sub("-", rendered)
+    rendered = _WS.sub(" ", rendered).strip()
+    return rendered[:120].rstrip()
+
+
+def _identity_value(schema: Schema, meta: dict) -> tuple[str, str] | None:
+    """(column, normalized value) for the highest-priority identity present."""
+    for col in schema.identity:
+        raw = meta.get(col)
+        if raw in (None, ""):
+            continue
+        if schema.columns.get(col) and schema.columns[col].type == "url":
+            return col, normalize_link(raw)
+        return col, norm_str(raw)
+    return None
+
+
+def match_row(vault: Vault, schema: Schema,
+              fields: dict) -> tuple[str | None, dict]:
+    candidates = [
+        (rel, meta) for rel, meta in iter_rows(vault, schema)
+        if all(norm_str(meta.get(k, "")) == norm_str(fields.get(k, ""))
+               for k in schema.key)
+    ]
+    incoming = _identity_value(schema, fields)
+    if incoming is not None:
+        col, value = incoming
+        for rel, meta in candidates:
+            existing = _identity_value(schema, meta)
+            if existing is not None and existing[1] == value:
+                return rel, {}
+        bare = [(rel, meta) for rel, meta in candidates
+                if _identity_value(schema, meta) is None]
+        if len(bare) == 1 and len(candidates) == 1:
+            return bare[0][0], {col: fields[col]}
+        return None, {}
+    if len(candidates) == 1:
+        return candidates[0][0], {}
+    if not candidates:
+        return None, {}
+    raise SheetError(
+        "Ambiguous match: multiple rows share this key — supply "
+        f"{schema.identity} to disambiguate. Candidates: "
+        f"{[rel for rel, _ in candidates]}")
