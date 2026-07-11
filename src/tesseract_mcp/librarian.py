@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -383,6 +384,14 @@ def run_sweep(
 
 
 def main() -> None:
+    # Windows consoles (and files a scheduled sweep redirects stdout into)
+    # default to cp1252, which can't encode the ✓/⚠ glyphs in
+    # format_report's health line. Reconfigure before any output so the
+    # sweep's report never crashes the CLI on a completed sweep.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Librarian caretaker sweep: index, organize, cache, "
                     "consolidation proposals, health report.")

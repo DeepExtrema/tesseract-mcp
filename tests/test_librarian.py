@@ -1,5 +1,6 @@
 """Tests for the Librarian caretaker loop."""
 
+import io
 import json
 import sys
 from datetime import datetime, timedelta
@@ -465,3 +466,25 @@ def test_cli_exits_nonzero_on_step_failure(vault_dir, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         librarian.main()
     assert exc.value.code == 1
+
+
+def test_cli_dry_run_survives_cp1252_console(vault_dir, monkeypatch):
+    """Windows consoles/piped-to-file stdout default to cp1252, which cannot
+    encode the checkmark/warning glyphs in format_report's health line.
+    main() must reconfigure stdout/stderr to utf-8 before printing, or the
+    CLI (and scheduled sweeps that redirect stdout to a log file) crashes
+    with UnicodeEncodeError even though the sweep itself succeeded."""
+    monkeypatch.setattr(sys, "argv", ["librarian", str(vault_dir), "--dry-run"])
+    out_buf = io.BytesIO()
+    err_buf = io.BytesIO()
+    fake_stdout = io.TextIOWrapper(out_buf, encoding="cp1252", errors="strict")
+    fake_stderr = io.TextIOWrapper(err_buf, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(sys, "stderr", fake_stderr)
+
+    librarian.main()
+
+    fake_stdout.flush()
+    out = out_buf.getvalue().decode("cp1252")
+    assert "## Sweep" in out
+    assert "health:" in out
