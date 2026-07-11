@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import yaml
 
 from .search import SKIP_DIRS, parse_frontmatter
 from .vault import Vault
@@ -240,3 +243,96 @@ def match_row(vault: Vault, schema: Schema,
         "Ambiguous match: multiple rows share this key — supply "
         f"{schema.identity} to disambiguate. Candidates: "
         f"{[rel for rel, _ in candidates]}")
+
+
+def _split(text: str) -> tuple[list[str], str]:
+    """(frontmatter lines without --- fences, body). Empty meta if none."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm = text[4:end].splitlines()
+            body = text[end + 4:].lstrip("\r").lstrip("\n")
+            return fm, body
+    return [], text
+
+
+def _yaml_line(key: str, value) -> str:
+    if isinstance(value, str) and _DATE.match(value):
+        return f"{key}: {value}"
+    return yaml.safe_dump({key: value}, sort_keys=False).strip()
+
+
+def _patch_lines(fm_lines: list[str], updates: dict) -> list[str]:
+    """Replace top-level 'key: value' lines; append keys not present."""
+    done: set[str] = set()
+    out: list[str] = []
+    for line in fm_lines:
+        m = re.match(r"^([A-Za-z_][\w-]*):", line)
+        if m and m.group(1) in updates:
+            key = m.group(1)
+            out.append(_yaml_line(key, updates[key]))
+            done.add(key)
+        else:
+            out.append(line)
+    for key, value in updates.items():
+        if key not in done:
+            out.append(_yaml_line(key, value))
+    return out
+
+
+def _log_line(field_changes: dict, agent: str, now: datetime) -> str | None:
+    st = field_changes.get("status")
+    if not st:
+        return None
+    frm = st["from"] if st["from"] is not None else "(new)"
+    return f"- {now:%Y-%m-%d} status: {frm} → {st['to']} (agent: {agent})"
+
+
+def _append_log(body: str, line: str) -> str:
+    if "## Log" not in body:
+        return body.rstrip("\n") + "\n\n## Log\n" + line + "\n"
+    return body.rstrip("\n") + "\n" + line + "\n"
+
+
+def upsert(vault: Vault, sheet: str, fields: dict, body: str | None = None,
+           agent: str = "claude", now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    schema = get_schema(vault, sheet)
+    rel, backfill = match_row(vault, schema, dict(fields))
+    merged = {**fields, **backfill}
+    if rel is None:
+        validate_fields(schema, merged, require_required=True)
+        stem = render_filename(schema, merged)
+        candidate, n = stem, 2
+        while vault.resolve(f"{schema.folder}/{candidate}.md").exists():
+            candidate = f"{stem} {n}"
+            n += 1
+        rel = f"{schema.folder}/{candidate}.md"
+        meta = {**merged,
+                "created": f"{now:%Y-%m-%d %H:%M}", "agent": agent}
+        fm = yaml.safe_dump(meta, sort_keys=False)
+        changed = {k: {"from": None, "to": v} for k, v in merged.items()}
+        text_body = body if body is not None else ""
+        log = _log_line(changed, agent, now)
+        if log:
+            text_body = _append_log(text_body, log)
+        vault.write(rel, f"---\n{fm}---\n\n{text_body}",
+                    confirm_outside_claude=True)
+        return {"result": "created", "path": rel, "changed": changed}
+
+    validate_fields(schema, merged, require_required=False)
+    text = vault.read(rel)
+    fm_lines, note_body = _split(text)
+    old = parse_frontmatter(text)
+    changed = {k: {"from": old.get(k), "to": v}
+               for k, v in merged.items() if old.get(k) != v}
+    if not changed:
+        return {"result": "updated", "path": rel, "changed": {}}
+    new_fm = _patch_lines(fm_lines, {k: v["to"] for k, v in changed.items()})
+    new_fm = _patch_lines(new_fm, {"agent": agent})
+    log = _log_line(changed, agent, now)
+    if log:
+        note_body = _append_log(note_body, log)
+    vault.write(rel, "---\n" + "\n".join(new_fm) + "\n---\n\n" + note_body,
+                overwrite=True, confirm_outside_claude=True)
+    return {"result": "updated", "path": rel, "changed": changed}

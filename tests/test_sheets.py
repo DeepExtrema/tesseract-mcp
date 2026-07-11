@@ -189,3 +189,68 @@ def test_match_job_link_normalized(sheet_vault, vault_dir):
         "company": "Beta", "role": "MLE",
         "job_link": "HTTPS://JOBS.BETA.COM/x/"})
     assert rel == "Job Search/Applications/Beta - MLE.md"
+
+
+def test_upsert_creates_with_log(sheet_vault):
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Saved"},
+                        agent="cowork")
+    assert out["result"] == "created"
+    text = sheet_vault.read(out["path"])
+    assert "company: Nova" in text and "## Log" in text
+    assert "status: (new) → Saved (agent: cowork)" in text
+    assert "agent: cowork" in text and "created:" in text
+
+
+def test_upsert_patch_preserves_untouched_bytes(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n"
+             "channel: LinkedIn   # via referral\n",
+             body="Story para.\n\n## Log\n- 2026-07-10 status: (new) → Saved (agent: claude)\n")
+    before = p.read_text(encoding="utf-8")
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Applied",
+                         "date_applied": "2026-07-11"})
+    assert out["result"] == "updated"
+    assert out["changed"]["status"] == {"from": "Saved", "to": "Applied"}
+    after = p.read_text(encoding="utf-8")
+    assert "channel: LinkedIn   # via referral" in after   # untouched line intact
+    assert "date_applied: 2026-07-11" in after             # new field appended
+    assert "Story para.\n" in after                        # body intact
+    assert after.count("## Log") == 1
+    assert "status: Saved → Applied" in after
+
+
+def test_upsert_noop_does_not_touch_file(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n")
+    mtime = p.stat().st_mtime_ns
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Saved"})
+    assert out["result"] == "updated" and out["changed"] == {}
+    assert p.stat().st_mtime_ns == mtime
+
+
+def test_upsert_refuses_undeclared_and_unknown_sheet(sheet_vault):
+    with pytest.raises(SheetError, match="recruiter"):
+        sheets.upsert(sheet_vault, "jobs",
+                      {"company": "N", "role": "R", "status": "Saved",
+                       "recruiter": "Bob"})
+    with pytest.raises(SheetError, match="Unknown sheet"):
+        sheets.upsert(sheet_vault, "subscriptions", {"company": "N"})
+
+
+def test_raw_write_still_confirm_gated(sheet_vault):
+    from tesseract_mcp.vault import VaultError
+    with pytest.raises(VaultError, match="outside Claude/"):
+        sheet_vault.write("Job Search/Applications/Sneak.md", "hi")
+
+
+def test_filename_collision_gets_suffix(sheet_vault, vault_dir):
+    _row(vault_dir, "Nova - MLE",
+         "company: Nova\nrole: MLE\nreq_id: R1\nstatus: Saved\n")
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "req_id": "R2",
+                         "status": "Saved"})
+    assert out["result"] == "created"
+    assert out["path"].endswith("Nova - MLE 2.md")
