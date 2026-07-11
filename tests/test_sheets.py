@@ -254,3 +254,68 @@ def test_filename_collision_gets_suffix(sheet_vault, vault_dir):
                          "status": "Saved"})
     assert out["result"] == "created"
     assert out["path"].endswith("Nova - MLE 2.md")
+
+
+@pytest.fixture
+def populated(sheet_vault, vault_dir):
+    _row(vault_dir, "A - R1", "company: A\nrole: R1\nstatus: Saved\n")
+    _row(vault_dir, "B - R2",
+         "company: B\nrole: R2\nstatus: Applied\nnext_follow_up: 2026-07-01\n")
+    _row(vault_dir, "C - R3",
+         "company: C\nrole: R3\nstatus: Rejected\nnext_follow_up: 2026-07-05\n")
+    return sheet_vault
+
+
+def test_query_follow_ups_due(populated):
+    rows = sheets.query(populated, "jobs", {
+        "next_follow_up": {"lte": "2026-07-11"},
+        "status": {"nin": ["Rejected", "Ghosted", "Withdrawn"]},
+    })
+    assert [r["company"] for r in rows] == ["B"]
+
+
+def test_query_ops_and_sort(populated):
+    assert len(sheets.query(populated, "jobs", {"status": {"eq": "Saved"}})) == 1
+    assert len(sheets.query(populated, "jobs",
+                            {"next_follow_up": {"missing": True}})) == 1
+    rows = sheets.query(populated, "jobs", {},
+                        sort={"by": "next_follow_up", "dir": "desc"})
+    assert rows[0]["company"] == "C" and rows[-1]["company"] == "A"
+
+
+def test_query_rejects_bad_op_and_untyped_ordering(populated):
+    with pytest.raises(SheetError, match="Unknown operator"):
+        sheets.query(populated, "jobs", {"status": {"like": "x"}})
+    with pytest.raises(SheetError, match="ordering"):
+        sheets.query(populated, "jobs", {"company": {"lt": "M"}})
+
+
+def test_query_excludes_schema_and_respects_limit(populated):
+    rows = sheets.query(populated, "jobs", {}, limit=2)
+    assert len(rows) == 2
+    assert all(not r["path"].endswith("_schema.md") for r in rows)
+
+
+def test_schema_info_lists_and_details(populated):
+    listing = sheets.schema_info(populated)
+    assert listing["jobs"]["rows"] == 3
+    detail = sheets.schema_info(populated, "jobs")
+    assert detail["columns"]["status"]["values"][0] == "Saved"
+    assert "Never delete rows" in detail["instructions"]
+
+
+def test_check_reports_drift_and_dupes(sheet_vault, vault_dir, capsys):
+    _row(vault_dir, "Ok - Row", "company: Ok\nrole: Row\nstatus: Saved\n")
+    _row(vault_dir, "Bad - Row",
+         "company: Bad\nrole: Row\nstage: applied\nstatus: Saved\n")
+    _row(vault_dir, "Dup - A", "company: Dup\nrole: A\nstatus: Saved\n")
+    _row(vault_dir, "Dup - A2", "company: Dup\nrole: A\nstatus: Saved\n")
+    rc = sheets.check(sheet_vault)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "stage" in out and "Dup" in out and '"clean": false' in out
+
+
+def test_check_clean_vault_exits_zero(sheet_vault, vault_dir, capsys):
+    _row(vault_dir, "Ok - Row", "company: Ok\nrole: Row\nstatus: Saved\n")
+    assert sheets.check(sheet_vault) == 0

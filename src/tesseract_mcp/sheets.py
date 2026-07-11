@@ -8,7 +8,10 @@ docs/superpowers/specs/2026-07-11-structured-sheets-design.md
 
 from __future__ import annotations
 
+import argparse
+import json
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -336,3 +339,120 @@ def upsert(vault: Vault, sheet: str, fields: dict, body: str | None = None,
     vault.write(rel, "---\n" + "\n".join(new_fm) + "\n---\n\n" + note_body,
                 overwrite=True, confirm_outside_claude=True)
     return {"result": "updated", "path": rel, "changed": changed}
+
+
+_OPS = {"eq", "ne", "lt", "lte", "gt", "gte", "contains", "missing", "in", "nin"}
+_ORDERED_TYPES = {"date", "number"}
+
+
+def _matches(col_type: str | None, actual, op: str, expected) -> bool:
+    if op == "missing":
+        return (actual in (None, "")) is bool(expected)
+    if actual in (None, ""):
+        return op in ("ne", "nin")
+    if op == "eq":
+        return actual == expected
+    if op == "ne":
+        return actual != expected
+    if op == "in":
+        return actual in expected
+    if op == "nin":
+        return actual not in expected
+    if op == "contains":
+        return str(expected).casefold() in str(actual).casefold()
+    if col_type == "date":
+        if hasattr(actual, "isoformat"):
+            actual = actual.isoformat()
+        if hasattr(expected, "isoformat"):
+            expected = expected.isoformat()
+    return {"lt": actual < expected, "lte": actual <= expected,
+            "gt": actual > expected, "gte": actual >= expected}[op]
+
+
+def query(vault: Vault, sheet: str, filters: dict | None = None,
+          sort: dict | None = None, limit: int = 50) -> list[dict]:
+    schema = get_schema(vault, sheet)
+    filters = filters or {}
+    for col, ops in filters.items():
+        col_type = schema.columns[col].type if col in schema.columns else None
+        for op in ops:
+            if op not in _OPS:
+                raise SheetError(f"Unknown operator '{op}' (allowed: {sorted(_OPS)}).")
+            if op in ("lt", "lte", "gt", "gte") and col_type not in _ORDERED_TYPES:
+                raise SheetError(
+                    f"Column '{col}' ({col_type}) does not support ordering "
+                    f"operators; only {sorted(_ORDERED_TYPES)} columns do.")
+    out = []
+    for rel, meta in iter_rows(vault, schema):
+        ok = all(
+            _matches(schema.columns[col].type if col in schema.columns else None,
+                     meta.get(col), op, expected)
+            for col, ops in filters.items() for op, expected in ops.items())
+        if ok:
+            out.append({"path": rel, **meta})
+    if sort:
+        by, desc = sort.get("by"), sort.get("dir") == "desc"
+        present = [r for r in out if r.get(by) not in (None, "")]
+        absent = [r for r in out if r.get(by) in (None, "")]
+        present.sort(key=lambda r: r[by], reverse=desc)
+        out = present + absent
+    return out[:limit]
+
+
+def schema_info(vault: Vault, sheet: str | None = None) -> dict:
+    if sheet is None:
+        registry = discover_sheets(vault)
+        return {name: {"folder": folder,
+                       "rows": len(iter_rows(vault, load_schema(vault, folder)))}
+                for name, folder in registry.items()}
+    s = get_schema(vault, sheet)
+    path = vault.resolve(f"{s.folder}/{SCHEMA_FILE}")
+    _, instructions = _split(path.read_text(encoding="utf-8"))
+    return {"sheet": s.name, "folder": s.folder, "filename": s.filename,
+            "key": s.key, "identity": s.identity,
+            "columns": {n: vars(c) for n, c in s.columns.items()},
+            "instructions": instructions.strip()}
+
+
+def check(vault: Vault) -> int:
+    report: dict = {"sheets": {}, "clean": True}
+    for name, folder in discover_sheets(vault).items():
+        schema = load_schema(vault, folder)
+        invalid, seen, dupes = [], {}, []
+        for rel, meta in iter_rows(vault, schema):
+            try:
+                validate_fields(schema, {k: v for k, v in meta.items()
+                                         if k not in STANDARD_COLUMNS},
+                                require_required=True)
+            except SheetError as e:
+                invalid.append({"path": rel, "error": str(e)})
+            key = tuple(norm_str(meta.get(k, "")) for k in schema.key)
+            ident = _identity_value(schema, meta)
+            full = (key, ident[1] if ident else None)
+            if full in seen:
+                dupes.append({"paths": [seen[full], rel]})
+            else:
+                seen[full] = rel
+        report["sheets"][name] = {
+            "rows": len(iter_rows(vault, schema)),
+            "invalid": invalid, "duplicates": dupes}
+        if invalid or dupes:
+            report["clean"] = False
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0 if report["clean"] else 1
+
+
+def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    parser = argparse.ArgumentParser(
+        description="Structured sheets: validate all rows against schemas.")
+    parser.add_argument("vault")
+    parser.add_argument("--check", action="store_true", required=True)
+    args = parser.parse_args()
+    raise SystemExit(check(Vault(args.vault)))
+
+
+if __name__ == "__main__":
+    main()
