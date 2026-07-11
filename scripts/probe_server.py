@@ -17,8 +17,10 @@ import sys
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
-DEFAULT_EXE = os.path.join(".venv", "Scripts", "tesseract-mcp.exe")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_EXE = str(REPO_ROOT / ".venv" / "Scripts" / "tesseract-mcp.exe")
 DEFAULT_VAULT = r"C:\Vaults\Tesseract"
 
 # Sentinel distinguishing "stream hit EOF" (child closed stdout, almost
@@ -65,10 +67,14 @@ def main() -> int:
     args = parser.parse_args()
 
     env = dict(os.environ, TESSERACT_VAULT_PATH=args.vault)
-    proc = subprocess.Popen(
-        [args.exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, env=env,
-    )
+    try:
+        proc = subprocess.Popen(
+            [args.exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=env,
+        )
+    except FileNotFoundError:
+        print(f"FAIL: server exe not found: {args.exe}")
+        return 1
 
     # Capture stderr into a bounded background buffer instead of DEVNULL,
     # so a FAIL can show what the server printed on its way out.
@@ -103,7 +109,7 @@ def main() -> int:
         if not stderr_tail:
             return
         print("--- server stderr (last lines) ---", file=sys.stderr)
-        for raw_line in stderr_tail:
+        for raw_line in list(stderr_tail):
             print(raw_line.decode(errors="replace").rstrip("\n"), file=sys.stderr)
 
     try:
@@ -122,26 +128,44 @@ def main() -> int:
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
               "params": {"name": "search_brain",
                          "arguments": {"query": "probe", "limit": 1}}})
-        line = read_line(proc.stdout, args.timeout)
-        elapsed = round(time.time() - start, 1)
-        if line is None:
-            raise ProbeFailure(
-                f"FAIL: search_brain gave no response in {args.timeout}s "
-                "(worker-thread import stall regression?)")
-        if line is _EOF:
-            raise ProbeFailure(
-                f"FAIL: server exited before responding (exit code {exit_code()})")
 
-        try:
-            resp = json.loads(line)
-            if not isinstance(resp, dict):
-                raise ValueError("response is not a JSON object")
-        except (json.JSONDecodeError, ValueError):
-            raise ProbeFailure(
-                f"FAIL: unexpected response after {elapsed}s: {line[:200]!r}")
-        if resp.get("id") != 2 or "result" not in resp:
-            raise ProbeFailure(
-                f"FAIL: unexpected response after {elapsed}s: {line[:200]!r}")
+        deadline = start + args.timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise ProbeFailure(
+                    f"FAIL: search_brain gave no response in {args.timeout}s "
+                    "(worker-thread import stall regression?)")
+            line = read_line(proc.stdout, remaining)
+            elapsed = round(time.time() - start, 1)
+            if line is None:
+                raise ProbeFailure(
+                    f"FAIL: search_brain gave no response in {args.timeout}s "
+                    "(worker-thread import stall regression?)")
+            if line is _EOF:
+                raise ProbeFailure(
+                    f"FAIL: server exited before responding "
+                    f"(exit code {exit_code()})")
+
+            try:
+                resp = json.loads(line)
+                if not isinstance(resp, dict):
+                    raise ValueError("response is not a JSON object")
+            except (json.JSONDecodeError, ValueError):
+                raise ProbeFailure(
+                    f"FAIL: unexpected response after {elapsed}s: {line[:200]!r}")
+
+            if resp.get("id") != 2:
+                # Server notification (e.g. logging) arrived before the
+                # real tool response -- keep waiting within the deadline.
+                continue
+            if "result" not in resp:
+                raise ProbeFailure(
+                    f"FAIL: unexpected response after {elapsed}s: {line[:200]!r}")
+            if resp["result"].get("isError"):
+                raise ProbeFailure(
+                    f"FAIL: search_brain returned isError after {elapsed}s")
+            break
 
         print(f"PASS: search_brain answered in {elapsed}s")
         return 0

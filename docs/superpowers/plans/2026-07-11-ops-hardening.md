@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Working dir: `C:\Users\Taimoor\Documents\GitHub\tesseract-mcp`; branch `codex/architecture-roadmap`.
-- Run tests with the system python: `python -m pytest tests/test_server.py -v` (pytest config maps `src/` via `pythonpath`).
+- Run tests with the repo-pinned venv python: `.venv\Scripts\python -m pytest tests/test_server.py -v` (pytest config maps `src/` via `pythonpath`).
 - The live server binary is `.venv\Scripts\tesseract-mcp.exe` (editable install — source changes are live, but **running processes hold old code**; restarting them is Task 4).
 - **Never lazy-import C-extension chains (numpy/torch/sentence_transformers) inside MCP tool bodies** — root cause of the audit bug. Eager-import at startup in the main thread.
 - Steps marked **STOP (consent)** require Taimoor's explicit go in chat before executing. Do not proceed past them autonomously.

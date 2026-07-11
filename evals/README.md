@@ -39,7 +39,7 @@ the fixture or the golden set — never lower the floor to pass.
 | date | git | success@5 | success@10 | recall@5 | recall@10 | MRR |
 |---|---|---|---|---|---|---|
 | 2026-07-10 | 55ce90e | 0.875 | 0.9375 | 0.875 | 0.9375 | 0.889 |
-| 2026-07-11 | 0834350 | 0.94 | 1.00 | 0.94 | 1.00 | 0.86 |
+| 2026-07-11 | 1ba005b | 0.94 | 1.00 | 0.94 | 1.00 | 0.86 |
 
 2026-07-11 row: salvaged the `Quick capture dentist.md` fixture fix (a
 second line closes the para-dentist paraphrase miss; it now ranks 5th)
