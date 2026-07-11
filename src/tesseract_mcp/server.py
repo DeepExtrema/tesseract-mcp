@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, librarian as librarian_mod, notes, organizer as organizer_mod, tasks as tasks_mod
+from . import cache as cache_mod, consolidate as consolidate_mod, graph, hybrid, indexer, librarian as librarian_mod, notes, organizer as organizer_mod, recall as recall_mod, tasks as tasks_mod
 from .embeddings import SentenceTransformerEmbedder
 from .extractor import consolidation_extractor, extraction_extractor
 from .vault import Vault, VaultError
@@ -124,6 +124,27 @@ def librarian_status() -> dict:
     and pending proposal counts. Read-only — the sweep itself runs on a
     schedule via `python -m tesseract_mcp.librarian`."""
     return librarian_mod.status(get_vault())
+
+
+@mcp.tool()
+def recall_bundle(
+    mode: str, project: str | None = None, since: str | None = None
+) -> dict:
+    """Raw material for the recall skills in one read-only call — no LLM.
+    mode='digest': everything changed since `since` (YYYY-MM-DD, default 7
+    days back): recent notes, inbox captures, open/recently-done tasks,
+    librarian health, pending proposals, new graph entities. mode='resume':
+    sessions, decisions, open tasks, and graph entities matching `project`
+    (case-insensitive substring). Sections degrade independently — a failed
+    section reports {"status": "error"} instead of failing the bundle."""
+    vault = get_vault()
+    if mode == "digest":
+        return recall_mod.digest_bundle(vault, since=since)
+    if mode == "resume":
+        if not project:
+            raise VaultError("mode='resume' requires project")
+        return recall_mod.resume_bundle(vault, project)
+    raise VaultError(f"mode must be 'digest' or 'resume', got {mode!r}")
 
 
 @mcp.tool()
@@ -250,6 +271,7 @@ def onboard() -> dict:
         "index_brain(force?) — extract entities into the semantic graph",
         "find_entity(query, type?) / related_notes(path, hops?) / graph_stats()",
         "context_bundle(query, hops?, limit?) — one call: hybrid hits + entities + related notes",
+        "recall_bundle(mode, project?, since?) — digest/resume raw material for the recall skills",
         "consolidate_graph(apply?) — merge duplicate entities (dry-run default)",
         "organize_vault(apply?) / undo_move(path) — neighbor-vote filing; dry-run default",
         "librarian_status() — last caretaker sweep + health report",

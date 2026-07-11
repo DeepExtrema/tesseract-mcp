@@ -29,7 +29,13 @@ def install(vault_root: Path) -> list[str]:
     claude = vault_root / "Claude"
     created: list[str] = []
 
-    for folder in (claude / "Inbox", claude / "Sessions", claude / "Concepts"):
+    for folder in (
+        claude / "Inbox",
+        claude / "Sessions",
+        claude / "Concepts",
+        claude / "Answers",
+        claude / "Digests",
+    ):
         if not folder.is_dir():
             folder.mkdir(parents=True)
             created.append(str(folder.relative_to(vault_root)))

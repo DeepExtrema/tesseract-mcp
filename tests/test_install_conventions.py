@@ -19,7 +19,7 @@ def test_installs_structure(tmp_path):
     assert "Constitution" in (tmp_path / "Claude" / "README.md").read_text(
         encoding="utf-8"
     )
-    assert len(created) == 8
+    assert len(created) == 10
 
 
 def test_root_guides_identical_and_routed(tmp_path):
@@ -38,6 +38,20 @@ def test_decisions_seed_is_append_only_log(tmp_path):
     assert body.startswith("---\n")       # frontmatter
     assert "# Decisions" in body
     assert "append" in body.lower()
+
+
+def test_install_creates_recall_folders(tmp_path):
+    install(tmp_path)
+    assert (tmp_path / "Claude" / "Answers").is_dir()
+    assert (tmp_path / "Claude" / "Digests").is_dir()
+
+
+def test_constitution_documents_recall_conventions(tmp_path):
+    install(tmp_path)
+    text = (tmp_path / "Claude" / "README.md").read_text(encoding="utf-8")
+    assert "Claude/Answers/" in text
+    assert "Claude/Digests/" in text
+    assert "file what compounds" in text.lower()
 
 
 def test_idempotent_does_not_clobber(tmp_path):

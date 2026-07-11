@@ -40,6 +40,16 @@ Rules for every AI agent writing to this vault. Read this before writing.
   Domains, Topics, Projects, Sources) maintained by `index_brain`. Fix wrong
   facts by editing entity notes directly; the graph is markdown. Prefer
   `related_notes`/`find_entity` when gathering context for a topic.
+- `Claude/Answers/` — rendered answers from `/recall` queries, one note per
+  question (`YYYY-MM-DD <question slug>.md`, frontmatter `type: answer` and
+  `question:`). Every claim cites its source note as a `[[wikilink]]`;
+  model-knowledge additions are labeled *(not from the vault)*. Past answers
+  are legitimate retrieval sources — that is the point.
+  `/resume --save` milestone snapshots (`type: resume`) also live here.
+- `Claude/Digests/` — one review digest per run (`YYYY-MM-DD.md`, frontmatter
+  `type: digest`) written by `/digest`: librarian health, captures to triage,
+  tasks, recent changes, pending proposals, new graph activity, suggested
+  questions. Rerunning the same day replaces that day's digest.
 
 ## Retention
 
@@ -51,6 +61,10 @@ Rules for every AI agent writing to this vault. Read this before writing.
   the Inbox.
 - `Claude/Inbox/` is prunable at any time. Graduate anything worth keeping
   into Concepts, Tasks, or Decisions before pruning.
+- Recall filing rule: **file what compounds, skip what expires.** Answers and
+  digests are filed — they gain value as retrieval sources. Resume briefings
+  and unblessed connection lists are not — filing expiring state teaches
+  search to retrieve stale context.
 
 ## Note format
 

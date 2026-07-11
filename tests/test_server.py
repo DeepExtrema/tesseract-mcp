@@ -29,6 +29,7 @@ def test_all_tools_registered():
         "index_brain", "find_entity", "related_notes", "graph_stats",
         "consolidate_graph", "onboard", "context_bundle",
         "organize_vault", "undo_move", "librarian_status",
+        "recall_bundle",
     }
 
 
@@ -265,3 +266,19 @@ def test_librarian_status_after_sweep(vault_dir):
     state["last_sweep"] = "2026-07-09 12:00:00"
     librarian.save_state(Vault(vault_dir), state)
     assert server.librarian_status()["last_sweep"] == "2026-07-09 12:00:00"
+
+
+def test_recall_bundle_digest_via_server():
+    bundle = server.recall_bundle("digest")
+    assert bundle["mode"] == "digest"
+    assert bundle["recent_notes"]["status"] == "ok"
+
+
+def test_recall_bundle_resume_requires_project():
+    with pytest.raises(VaultError, match="requires project"):
+        server.recall_bundle("resume")
+
+
+def test_recall_bundle_rejects_unknown_mode():
+    with pytest.raises(VaultError, match="digest"):
+        server.recall_bundle("weekly")
