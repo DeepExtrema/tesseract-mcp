@@ -7,3 +7,5 @@ dist/
 server/.env
 .env
 .worktrees/
+.gstack/
+.cursor/hooks/state/
