@@ -72,3 +72,71 @@ def test_digest_proposals_default_zero_without_sweep(vault):
     bundle = recall.digest_bundle(vault)
     assert bundle["proposals"]["pending"] == 0
     assert bundle["proposals"]["detail_note"] == "Claude/Organizer.md"
+
+
+def _write_session(vault_dir, name, project, created, body):
+    (vault_dir / "Claude" / "Sessions" / name).write_text(
+        f"---\ncreated: {created}\nagent: claude\n"
+        f"project: {project}\ntags: []\n---\n\n{body}\n",
+        encoding="utf-8",
+    )
+
+
+def test_resume_matches_project_substring_newest_first(vault, vault_dir):
+    _write_session(vault_dir, "2026-07-01 Graph work.md",
+                   "tesseract-mcp", "2026-07-01 10:00", "Built the graph.")
+    _write_session(vault_dir, "2026-07-09 Evals.md",
+                   "tesseract-mcp", "2026-07-09 10:00", "Shipped evals.")
+    _write_session(vault_dir, "2026-07-05 Other.md",
+                   "sentinel", "2026-07-05 10:00", "Unrelated work.")
+    bundle = recall.resume_bundle(vault, "tesseract")
+    assert bundle["mode"] == "resume"
+    assert bundle["project"] == "tesseract"
+    notes = bundle["sessions"]["notes"]
+    assert [n["path"] for n in notes] == [
+        "Claude/Sessions/2026-07-09 Evals.md",
+        "Claude/Sessions/2026-07-01 Graph work.md",
+    ]
+    assert "Shipped evals." in notes[0]["excerpt"]
+    assert "---" not in notes[0]["excerpt"]  # frontmatter stripped
+
+
+def test_resume_respects_limit(vault, vault_dir):
+    for day in range(1, 5):
+        _write_session(vault_dir, f"2026-07-0{day} S{day}.md",
+                       "tesseract", f"2026-07-0{day} 10:00", f"Work {day}.")
+    bundle = recall.resume_bundle(vault, "tesseract", limit=2)
+    assert len(bundle["sessions"]["notes"]) == 2
+
+
+def test_resume_decisions_and_tasks_filter_by_project(vault, vault_dir):
+    (vault_dir / "Claude" / "Decisions.md").write_text(
+        "# Decisions\n\n"
+        "- 2026-07-08 — hybrid search ships in tesseract ([[x]])\n"
+        "- 2026-07-09 — sentinel retired\n",
+        encoding="utf-8",
+    )
+    (vault_dir / "Claude" / "Tasks.md").write_text(
+        "# Tasks\n\n- [ ] tune tesseract eval gate\n"
+        "- [ ] water plants\n- [x] tesseract done thing\n",
+        encoding="utf-8",
+    )
+    bundle = recall.resume_bundle(vault, "Tesseract")  # case-insensitive
+    assert bundle["decisions"]["lines"] == [
+        "- 2026-07-08 — hybrid search ships in tesseract ([[x]])"
+    ]
+    assert [t["text"] for t in bundle["tasks"]["tasks"]] == [
+        "tune tesseract eval gate"
+    ]
+
+
+def test_resume_decisions_missing_file_is_empty_not_error(vault):
+    bundle = recall.resume_bundle(vault, "tesseract")
+    assert bundle["decisions"]["status"] == "ok"
+    assert bundle["decisions"]["lines"] == []
+
+
+def test_resume_entities_without_graph_cache(vault):
+    bundle = recall.resume_bundle(vault, "tesseract")
+    assert bundle["entities"]["status"] == "ok"
+    assert bundle["entities"]["entities"] == []
