@@ -69,6 +69,17 @@ organizer cron jobs. Sweep reports land in `Claude/Librarian.md`; the
 set, seeds settings (embed model pinned to what the search stack reads), and
 installs the agent conventions tree. `--check` reports version drift.
 
+### The recall harness
+Four Claude Code skills turn the vault into a memory you can question:
+`/recall` (researched answers, every claim cited as a `[[wikilink]]`),
+`/digest` (the review ritual), `/resume` (project briefings), and
+`/connections` (graph serendipity). `/recall` files every answer into
+`Claude/Answers/`, where the Librarian indexes it like any note — so
+answers become retrieval sources and the vault compounds from asking
+questions, not just ingesting. Skills live in [`skills/`](skills/) and
+install with `python -m tesseract_mcp.skill_sync` (additive; `--check`
+reports drift; existing skills are never modified without `--force`).
+
 ## How retrieval works
 
 ```mermaid
@@ -110,6 +121,7 @@ golden set lives in the vault itself). Reproduce with
 | **Orient** | `onboard` | Call first in a new session — constitution, routing, cheat-sheet, graph status |
 | **Retrieve** | `search_brain` | Hybrid search (BM25 + vector, RRF-fused), optional tag/folder filters |
 | | `context_bundle` | One call: search hits + their graph entities + related notes |
+| | `recall_bundle` | Digest/resume raw material for the recall skills — one read-only call |
 | | `read_note` | Read any note |
 | | `query_notes` | Query notes by frontmatter metadata |
 | | `get_backlinks` | Notes whose `[[wikilinks]]` point at a note |
