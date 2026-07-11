@@ -164,7 +164,7 @@ from tesseract_mcp.evals import FIXTURE_GOLDEN, FIXTURE_VAULT
 
 def test_fixture_golden_paths_all_exist():
     queries = load_golden(FIXTURE_GOLDEN)
-    assert len(queries) == 16
+    assert len(queries) == 17
     assert validate_paths(queries, FIXTURE_VAULT, strict=True) == {}
 
 
@@ -245,6 +245,19 @@ import json as jsonlib
 
 from tesseract_mcp import evals as evals_mod
 from tesseract_mcp.evals import append_history, format_table, main, to_json
+
+
+def test_run_evals_creates_missing_state_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "fresh" / "state"))
+    root = tmp_path / "vault"
+    (root / "Notes").mkdir(parents=True)
+    (root / "Notes" / "A.md").write_text("alpha alpha content", encoding="utf-8")
+    state = tmp_path / "fresh" / "state"
+    assert not state.exists()
+    qs = [GoldenQuery(id="q1", query="alpha", expect=["Notes/A.md"])]
+    sc = run_evals(Vault(root), state, KeywordEmbedder(), qs)
+    assert state.is_dir()
+    assert sc.results[0].first_rank == 1
 
 
 def _scorecard(tmp_path, monkeypatch):
@@ -383,3 +396,23 @@ def test_fixture_thresholds_with_real_model(tmp_path, monkeypatch):
     assert sc.skipped == 0
     assert sc.success_at[10] >= 0.80
     assert sc.mrr >= 0.50
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TESSERACT_RUN_EVALS"),
+    reason="set TESSERACT_RUN_EVALS=1 to run per-query paraphrase checks",
+)
+def test_para_dentist_finds_note_within_top_10(tmp_path, monkeypatch):
+    """Paraphrase lane: zero keyword overlap, vector retrieval must still hit."""
+    monkeypatch.setenv("TESSERACT_STATE_DIR", str(tmp_path / "state"))
+    queries = load_golden(FIXTURE_GOLDEN)
+    q = next(x for x in queries if x.id == "para-dentist")
+    sc = run_evals(
+        Vault(FIXTURE_VAULT),
+        tmp_path / "state",
+        evals_mod._make_embedder(),
+        [q],
+    )
+    r = sc.results[0]
+    assert r.success_at[10] is True
+    assert r.first_rank is not None and r.first_rank <= 10

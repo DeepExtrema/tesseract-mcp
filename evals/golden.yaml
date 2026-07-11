@@ -37,6 +37,18 @@
   expect: [Notes/Espresso Dialing.md]
   accept: [Notes/Long Ramble.md]
   note: mixed keyword + semantic
+- id: para-ceiling-espresso
+  query: my morning cup turns out watery and tangy no matter how I adjust things, and it's always over far too soon
+  expect: [Notes/Espresso Dialing.md]
+  note: >
+    Deliberate embedder-ceiling sentinel -- pure paraphrase, zero
+    content-word overlap with the target (no shot/sour/grind/dose/yield/
+    finish/fast), unlike kw-espresso-sour which shares keywords. "tangy"
+    also legitimately confuses this with Sourdough Starter (both are
+    about a sour/liquid state), so it is expected to rank low or miss
+    entirely against bge-micro-v2. A miss (or a low rank behind the
+    sourdough note) here is signal, not a bug -- do not "fix" it by
+    editing this query to make it easier.
 - id: title-rrf
   query: reciprocal rank fusion
   expect: [Claude/Concepts/Reciprocal Rank Fusion.md]
