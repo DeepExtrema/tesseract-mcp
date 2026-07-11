@@ -53,6 +53,17 @@ def _get_embedder():
     return _embedder
 
 
+def _warm_start() -> None:
+    """Load the embedding stack in the main thread before the event loop.
+
+    On Python 3.14 + Windows, the first import of numpy/torch inside a
+    FastMCP tool worker thread stalls until the next stdin message arrives
+    (2026-07-11 audit). Constructing the embedder here forces those imports
+    and the model load onto the main thread at startup instead.
+    """
+    _get_embedder()
+
+
 @mcp.tool()
 def search_brain(
     query: str,
@@ -343,6 +354,7 @@ def consolidate_graph(apply: bool = False) -> dict:
 
 
 def main() -> None:
+    _warm_start()
     mcp.run()
 
 

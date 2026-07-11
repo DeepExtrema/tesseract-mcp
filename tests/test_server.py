@@ -282,3 +282,21 @@ def test_recall_bundle_resume_requires_project():
 def test_recall_bundle_rejects_unknown_mode():
     with pytest.raises(VaultError, match="digest"):
         server.recall_bundle("weekly")
+
+
+def test_warm_start_constructs_embedder(monkeypatch):
+    class FakeEmbedder:
+        pass
+
+    monkeypatch.setattr(server, "SentenceTransformerEmbedder", FakeEmbedder)
+    monkeypatch.setattr(server, "_embedder", None)
+    server._warm_start()
+    assert isinstance(server._embedder, FakeEmbedder)
+
+
+def test_main_warm_starts_before_run(monkeypatch):
+    order = []
+    monkeypatch.setattr(server, "_warm_start", lambda: order.append("warm"))
+    monkeypatch.setattr(server.mcp, "run", lambda: order.append("run"))
+    server.main()
+    assert order == ["warm", "run"]
