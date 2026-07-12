@@ -17,7 +17,7 @@ from . import tasks as tasks_mod
 from .cache import find_entity
 from .graph import _vault_files
 from .indexer import db_path
-from .search import parse_frontmatter
+from .search import body_text, parse_frontmatter
 from .vault import Vault, VaultError
 
 DIGEST_DEFAULT_DAYS = 7
@@ -94,11 +94,7 @@ def digest_bundle(
 
 def _body_excerpt(text: str, limit: int = 400) -> str:
     """First `limit` chars of the note body, frontmatter stripped."""
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            text = text[end + 4:]
-    return " ".join(text.split())[:limit]
+    return " ".join(body_text(text).split())[:limit]
 
 
 def _session_notes(vault: Vault, project: str, limit: int) -> list[dict]:

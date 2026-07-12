@@ -31,6 +31,15 @@ def parse_frontmatter(text: str) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+def body_text(text: str) -> str:
+    """Note content with the leading YAML frontmatter block removed."""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            return text[end + 4:]
+    return text
+
+
 def _frontmatter_tags(text: str) -> list[str]:
     tags = parse_frontmatter(text).get("tags") or []
     if not isinstance(tags, list):

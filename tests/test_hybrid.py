@@ -1,6 +1,6 @@
 import pytest
 
-from tesseract_mcp.hybrid import hybrid_search, rrf_fuse
+from tesseract_mcp.hybrid import _excerpt, hybrid_search, rrf_fuse
 
 
 class FakeEmbedder:
@@ -101,6 +101,38 @@ def test_substring_signal_only_when_bm25_empty(vault, vault_dir):
     paths = [h.path for h in hits]
     assert "zzz.md" in paths       # real BM25 token match
     assert "aaa.md" not in paths   # substring-only; signal gated off
+
+
+FRONTMATTER_NOTE = "---\ntags: [x]\n---\n\n# Title Line\n\nReal content here.\n"
+
+
+def test_excerpt_semantic_only_hit_returns_first_body_line_not_delimiter():
+    assert _excerpt(FRONTMATTER_NOTE, "Notes/N.md", "unrelated-query") == "# Title Line"
+
+
+def test_excerpt_line_match_never_returns_frontmatter_line():
+    text = "---\ntags: [billing]\n---\n\nInvoice for the billing cycle.\n"
+    assert _excerpt(text, "Notes/N.md", "billing") == "Invoice for the billing cycle."
+
+
+def test_excerpt_frontmatter_only_note_returns_empty():
+    assert _excerpt("---\ntags: [x]\n---\n", "Notes/N.md", "zzz") == ""
+
+
+def test_excerpt_title_match_unchanged():
+    assert _excerpt(FRONTMATTER_NOTE, "Claude/Sessions/Weekly Review.md", "weekly") == "(title match)"
+
+
+def test_hybrid_search_semantic_hit_excerpt_is_not_frontmatter(vault, vault_dir):
+    (vault_dir / "Contractors.md").write_text(
+        "---\ntags: [money]\n---\n\nOutstanding invoices from contractors.\n",
+        encoding="utf-8",
+    )
+    hits = hybrid_search(
+        vault, vault.root, FakeSemanticEmbedder(), "who do I owe money to"
+    )
+    by_path = {h.path: h.excerpt for h in hits}
+    assert by_path["Contractors.md"] == "Outstanding invoices from contractors."
 
 
 def test_substring_fallback_still_works_when_bm25_empty(vault):
