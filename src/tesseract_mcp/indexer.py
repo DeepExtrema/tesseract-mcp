@@ -93,8 +93,13 @@ def run(
     force: bool = False,
     ignore: tuple[str, ...] = DEFAULT_IGNORE,
     precompute_embeddings: bool = True,
+    retry_failures: bool = False,
 ) -> dict:
     manifest = load_manifest(vault.root)
+    if retry_failures:
+        # Re-arm notes benched at MAX_ATTEMPTS (e.g. after a quota outage):
+        # cleared entries fall through the normal hash-diff pending logic.
+        manifest["failures"].clear()
     current = scan_notes(vault, ignore)
     skipped = 0
     if force:
@@ -163,6 +168,11 @@ def main() -> None:
     parser.add_argument("--batch", type=int, default=DEFAULT_BATCH)
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
+        "--retry-failures",
+        action="store_true",
+        help="Clear the failure ledger so notes benched at max attempts are retried",
+    )
+    parser.add_argument(
         "--rebuild-only",
         action="store_true",
         help="Rebuild the query cache from Claude/Graph markdown without any LLM extraction",
@@ -177,6 +187,7 @@ def main() -> None:
         extraction_extractor(backend=args.backend),
         batch=args.batch,
         force=args.force,
+        retry_failures=args.retry_failures,
     )
     print(json.dumps(counts, indent=2))
 

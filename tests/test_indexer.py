@@ -255,3 +255,24 @@ def test_stale_mentions_retracted_on_reprocess(vault):
     counts = indexer.run(vault, FakeExtractor())   # re-extraction finds no entities
     assert counts["mentions_retracted"] == 1
     assert "[[Claude/Inbox/story|" not in vault.read(acme_rel)
+
+
+def test_run_retry_failures_reattempts_maxed_out_notes(vault):
+    for _ in range(indexer.MAX_ATTEMPTS):
+        indexer.run(vault, FakeExtractor(fail={"Daily.md"}))
+    benched = FakeExtractor()
+    indexer.run(vault, benched)
+    assert "Daily.md" not in benched.calls  # attempts exhausted: benched
+
+    retried = FakeExtractor()
+    counts = indexer.run(vault, retried, retry_failures=True)
+    assert "Daily.md" in retried.calls
+    assert counts["failed"] == 0
+    assert "Daily.md" not in indexer.load_manifest(vault.root)["failures"]
+
+
+def test_run_retry_failures_skips_unchanged_tracked_notes(vault):
+    indexer.run(vault, FakeExtractor())  # index everything cleanly
+    fx = FakeExtractor()
+    counts = indexer.run(vault, fx, retry_failures=True)
+    assert counts["processed"] == 0 and fx.calls == []
