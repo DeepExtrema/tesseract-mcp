@@ -77,17 +77,32 @@ bounded. The slice is filled in priority order:
 1. **Unchecked/changed entities first** (identity hash ≠ `checked_hash`) — new
    entities and ones whose identity changed since last adjudication, so dups are
    caught soon after ingest.
-2. **Backstop fill**: if the slice isn't full, add entities from a rolling cursor
-   advancing through a stable entity ordering (sorted entity path), wrapping at
-   the end — re-checking already-checked entities to catch dup pairs where
-   neither side recently changed.
+2. **Backstop fill**: if the slice isn't full AND the backstop cadence gate has
+   elapsed (§6), add entities by advancing a rolling cursor through the stable
+   lexicographic entity-path ordering — re-checking already-checked entities to
+   catch dup pairs where neither side recently changed.
+
+**Cursor is a PATH, not an index.** Store `cursor` as the last-visited entity
+path string. Each sweep the backstop resumes from the first entity path
+lexicographically `> cursor` and wraps to the start after the last path. Do NOT
+store an integer index into the sorted list: entities are created and merged
+(deleted) between sweeps, so the list mutates every sweep and a positional index
+would silently skip or re-cover entities, breaking the completeness guarantee.
+Anchoring to a path value advances through a stable total order regardless of
+churn.
 
 If more than `SLICE_SIZE` entities are unchecked (cold start: all 1,235), take
-`SLICE_SIZE` of them this sweep in cursor order; the rest stay unchecked and are
+`SLICE_SIZE` of them this sweep in path order; the rest stay unchecked and are
 drained over the next sweeps (~ceil(1235/200) ≈ 7 sweeps). After a slice entity
 is adjudicated (whether or not it produced a merge), set its `checked_hash` to
-its current identity hash so it leaves the unchecked set. The cursor and
-`checked_hash` map persist in the consolidation state.
+its current identity hash so it leaves the unchecked set.
+
+**Persistence caveat.** `cursor` + `checked_hash` are written with the rest of
+the consolidation state, which today only persists under `apply=True`
+([librarian.py:239](../../../src/tesseract_mcp/librarian.py)). So the slice
+advances across the librarian's apply-mode sweeps; a bare `consolidate` CLI
+dry-run stays stateless and recomputes the slice from scratch each run. The plan
+must state this explicitly so no one expects a dry-run to advance the cursor.
 
 ### 5. Bounded LLM adjudication (the timeout fix)
 
@@ -97,6 +112,17 @@ and fast — no single call approaches 120s. Calls are INDEPENDENT: a batch that
 errors or times out is skipped, recorded, and the rest proceed — a bad batch no
 longer fails the whole consolidate step (current failure mode).
 
+**Batching invariant — pack whole clusters, never split one.** A single call
+takes whole clusters up to the `MAX_ENTITIES_PER_CALL` cap and never bisects a
+cluster: all variants of one candidate group must be adjudicated in the same
+prompt or the model cannot see them together. Since `MAX_CLUSTER = 10 < 40` a
+cluster always fits. We do NOT additionally require a call to be single-type:
+the existing `known`-set validation in `propose_merges`
+([consolidate.py:86](../../../src/tesseract_mcp/consolidate.py)) already rejects
+any merge whose canonical/duplicates are not all the same declared type, so a
+mixed-type or multi-cluster batch is safe — at worst a multi-cluster prompt
+catches a kNN-missed dup as a bonus.
+
 Output is the SAME format as today — `{"merges": [{"type","canonical","duplicates"}]}`
 — so `_coerce`/validation in `propose_merges` and the downstream apply path
 (`_apply_one`, pending-proposals review) are UNCHANGED. The per-batch prompt is
@@ -104,12 +130,25 @@ the existing `PROMPT` with a smaller `listing`.
 
 ### 6. Throttle change
 
-Because work is bounded per sweep, consolidation runs a slice EVERY sweep
-(advancing the cursor) rather than the current all-or-nothing
-`should_consolidate` gate. Relax it to "run a bounded slice if any entities
-exist"; dirty entities are always included regardless of the cursor position.
-`CONSOLIDATE_MIN_NEW_ENTITIES` / `CONSOLIDATE_MAX_AGE_DAYS` gating is removed for
-the slice path (the rolling cursor is the new pacing mechanism).
+The current all-or-nothing `should_consolidate` gate is replaced by two
+independently-paced paths, so steady-state LLM spend stays low when the graph is
+quiet:
+
+- **Unchecked/changed path — eager.** Runs every sweep whenever any unchecked
+  entity exists (bounded by `SLICE_SIZE`). This is the churn response; it is
+  cheap when little changed and catches new dups fast. It supersedes the old
+  `CONSOLIDATE_MIN_NEW_ENTITIES` new-entity threshold.
+- **Backstop path — throttled.** The rolling-cursor re-check of already-checked
+  entities runs only when (a) the slice has spare budget after the unchecked
+  fill AND (b) `BACKSTOP_MIN_INTERVAL` has elapsed since the last backstop
+  advance. Repurpose the existing age-based idea (`CONSOLIDATE_MAX_AGE_DAYS`) as
+  this cadence constant rather than deleting all gating — otherwise the backstop
+  would issue LLM calls every sweep forever even on a static graph. Rationale is
+  sharpened by the current codex/ChatGPT quota exhaustion (until 2026-08-10): an
+  always-on backstop is a standing cost.
+
+The backstop's last-advance marker (timestamp or sweep counter) lives in the
+consolidation state alongside `cursor`.
 
 ### 7. Error handling & testing
 
@@ -126,11 +165,18 @@ Tests:
   start with an empty `checked_hash` map);
 - unchecked/changed entities are prioritized into the slice ahead of backstop
   fill;
-- cursor advances and wraps; over ceil(n/SLICE_SIZE) sweeps every entity is
-  adjudicated (backlog drains);
+- cursor is a path string: backstop resumes from the first path `> cursor` and
+  wraps at the end; over ceil(n/SLICE_SIZE) sweeps every entity is adjudicated
+  (backlog drains);
+- cursor is churn-robust: inserting and deleting entities between sweeps causes
+  no skipped or double-covered entities (the failure a positional index would
+  produce);
+- backstop cadence: the backstop is skipped when `BACKSTOP_MIN_INTERVAL` has not
+  elapsed, even with spare slice budget; the unchecked/changed path still runs;
 - after adjudication a slice entity's `checked_hash` is set to its identity hash
   (leaves the unchecked set); a later identity change re-adds it;
-- each LLM call's listing ≤ `MAX_ENTITIES_PER_CALL`;
+- batching packs whole clusters and never splits a cluster across calls; each
+  call's listing ≤ `MAX_ENTITIES_PER_CALL`;
 - a timing-out/erroring batch is skipped while others proceed and the consolidate
   step still succeeds (returns proposals, records the skip);
 - entity-vector cache: unchanged identity → cache hit (no re-embed); changed
@@ -148,11 +194,15 @@ Tests:
   the cursor and `checked_hash` map, relaxed throttle; `sweep_errors` records
   skipped batches.
 - Consolidation state (in `librarian_state.json`'s `consolidation` block) gains:
-  `cursor` (int index into the sorted entity list), `checked_hash` (`{path:
-  hash}`). Entity vectors live in their own `entity_vectors.json` under the
-  state dir.
+  `cursor` (last-visited entity **path string**, not an index), `checked_hash`
+  (`{path: hash}`), and `backstop_last_advance` (timestamp/sweep counter for the
+  cadence gate). Persisted under the existing `apply=True` path
+  ([librarian.py:239](../../../src/tesseract_mcp/librarian.py)). Entity vectors
+  live in their own `entity_vectors.json` under the state dir.
 - Tunable constants (module-level, one place): `SIM_THRESHOLD=0.85`,
-  `K_NEIGHBORS=5`, `MAX_CLUSTER=10`, `SLICE_SIZE=200`, `MAX_ENTITIES_PER_CALL=40`.
+  `K_NEIGHBORS=5`, `MAX_CLUSTER=10`, `SLICE_SIZE=200`, `MAX_ENTITIES_PER_CALL=40`,
+  `BACKSTOP_MIN_INTERVAL` (backstop cadence; repurposes the old
+  `CONSOLIDATE_MAX_AGE_DAYS` idea).
 
 ## Out of scope
 
