@@ -1,8 +1,10 @@
 import pytest
+import yaml
 
 from tesseract_mcp import sheets
+from tesseract_mcp.search import parse_frontmatter
 from tesseract_mcp.sheets import SheetError
-from tesseract_mcp.vault import Vault
+from tesseract_mcp.vault import Vault, VaultError
 
 JOBS_SCHEMA = """---
 sheet: jobs
@@ -319,3 +321,283 @@ def test_check_reports_drift_and_dupes(sheet_vault, vault_dir, capsys):
 def test_check_clean_vault_exits_zero(sheet_vault, vault_dir, capsys):
     _row(vault_dir, "Ok - Row", "company: Ok\nrole: Row\nstatus: Saved\n")
     assert sheets.check(sheet_vault) == 0
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Critical 1 — _patch_lines must not orphan continuation
+# lines of a block-style value (e.g. tags) it is replacing.
+# ---------------------------------------------------------------------------
+
+def test_patch_lines_consumes_continuation_of_replaced_key():
+    fm_lines = [
+        "company: Nova",
+        "role: MLE",
+        "status: Saved",
+        "tags:",
+        "  - old",
+        "  - stale",
+    ]
+    out = sheets._patch_lines(fm_lines, {"tags": ["new", "shiny"]})
+    text = "\n".join(out)
+    assert "- old" not in text
+    assert "- stale" not in text
+    parsed = yaml.safe_load(text)
+    assert parsed["tags"] == ["new", "shiny"]
+    assert parsed["status"] == "Saved"
+
+
+def test_upsert_patch_round_trips_block_style_tags(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n"
+             "tags:\n  - old\n  - stale\n")
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Applied",
+                         "tags": ["new", "shiny"]})
+    assert out["result"] == "updated"
+    after = p.read_text(encoding="utf-8")
+    parsed = parse_frontmatter(after)
+    assert parsed["tags"] == ["new", "shiny"]
+    assert parsed["status"] == "Applied"
+    assert parsed["company"] == "Nova"  # untouched fields survived the patch
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Critical 2 — Claude/ subtree can never register a sheet;
+# duplicate sheet names must raise, not silently last-write-wins.
+# ---------------------------------------------------------------------------
+
+def test_discover_sheets_ignores_claude_planted_schema(vault_dir):
+    # "Applications" (real, top-level) sorts alphabetically BEFORE "Claude/..."
+    # ('A' < 'C'), so rglob visits the real folder first and the Claude-planted
+    # duplicate is processed second — the exact ordering a naive last-write-wins
+    # registry would let a Claude-planted schema shadow. Regressing to that
+    # sort-order-dependent behavior is the bug this test pins.
+    real = vault_dir / "Applications"
+    real.mkdir()
+    (real / "_schema.md").write_text(JOBS_SCHEMA, encoding="utf-8")
+    claude_sheet = vault_dir / "Claude" / "Fake"
+    claude_sheet.mkdir(parents=True)
+    (claude_sheet / "_schema.md").write_text(
+        "---\nsheet: jobs\nfilename: \"{x}\"\nkey: [x]\ncolumns:\n"
+        "  x: {type: string}\n---\n",
+        encoding="utf-8",
+    )
+    v = Vault(vault_dir)
+    # The real sheet must win — a Claude-planted schema must never shadow it,
+    # even when it would sort later and "win" a naive last-write-wins registry.
+    assert sheets.discover_sheets(v) == {"jobs": "Applications"}
+
+
+def test_discover_sheets_raises_on_duplicate_names(sheet_vault, vault_dir):
+    other = vault_dir / "Other Folder"
+    other.mkdir()
+    (other / "_schema.md").write_text(
+        "---\nsheet: jobs\nfilename: \"{x}\"\nkey: [x]\ncolumns:\n"
+        "  x: {type: string}\n---\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SheetError, match="Duplicate sheet name"):
+        sheets.discover_sheets(sheet_vault)
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Critical 3 — dates must normalize to isoformat strings
+# before any comparison (changed-calc and _matches), so unquoted YAML dates
+# don't cause false "changed" churn or missed eq/query hits.
+# ---------------------------------------------------------------------------
+
+def test_upsert_noop_with_unquoted_date_field(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Applied\n"
+             "date_applied: 2026-07-11\n")
+    mtime = p.stat().st_mtime_ns
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Applied",
+                         "date_applied": "2026-07-11"})
+    assert out["result"] == "updated"
+    assert out["changed"] == {}
+    assert p.stat().st_mtime_ns == mtime
+
+
+def test_query_eq_matches_unquoted_date(sheet_vault, vault_dir):
+    _row(vault_dir, "Nova - MLE",
+         "company: Nova\nrole: MLE\nstatus: Applied\n"
+         "date_applied: 2026-07-11\n")
+    rows = sheets.query(sheet_vault, "jobs",
+                        {"date_applied": {"eq": "2026-07-11"}})
+    assert len(rows) == 1
+    assert rows[0]["company"] == "Nova"
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 4 — one malformed _schema.md must not brick
+# every sheet tool; bad folders are skipped and surfaced in schema_info.
+# ---------------------------------------------------------------------------
+
+def test_bad_schema_in_one_folder_does_not_brick_others(sheet_vault, vault_dir):
+    bad_folder = vault_dir / "Job Search" / "Bad"
+    bad_folder.mkdir()
+    (bad_folder / "_schema.md").write_text(
+        "---\nsheet: broken\nfilename: \"{x}\"\nkey: [x]\ncolumns:\n"
+        "  x: {type: alien}\n---\n",
+        encoding="utf-8",
+    )
+    assert sheets.discover_sheets(sheet_vault) == {"jobs": "Job Search/Applications"}
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Saved"})
+    assert out["result"] == "created"
+    listing = sheets.schema_info(sheet_vault)
+    assert "jobs" in listing
+    assert "invalid" in listing
+    assert listing["invalid"][0]["folder"] == "Job Search/Bad"
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 6 — created is server-stamped on create only;
+# a caller-supplied created/agent field must not leak through on update.
+# ---------------------------------------------------------------------------
+
+def test_upsert_update_ignores_caller_supplied_created(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n"
+             "created: '2020-01-01 00:00'\n")
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Applied",
+                         "created": "2099-01-01 00:00"})
+    assert "created" not in out["changed"]
+    after = p.read_text(encoding="utf-8")
+    assert "2020-01-01" in after
+    assert "2099-01-01" not in after
+
+
+def test_upsert_update_caller_supplied_agent_field_does_not_leak_to_changed(
+    sheet_vault, vault_dir
+):
+    _row(vault_dir, "Nova - MLE",
+         "company: Nova\nrole: MLE\nstatus: Saved\nagent: claude\n")
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "Nova", "role": "MLE", "status": "Applied",
+                         "agent": "sneaky"},
+                        agent="cowork")
+    assert "agent" not in out["changed"]
+    after = sheet_vault.read(out["path"])
+    assert "agent: cowork" in after
+    assert "sneaky" not in after
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 7 — url columns must reject arbitrary prose.
+# ---------------------------------------------------------------------------
+
+def test_url_rejects_prose(sheet_vault):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    with pytest.raises(SheetError, match="URL"):
+        sheets.validate_fields(
+            s, {**VALID, "job_link": "Apply via the careers page, ask for Jane"},
+            require_required=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 9 — body may only be supplied on create; an
+# update path must reject it rather than silently dropping it.
+# ---------------------------------------------------------------------------
+
+def test_upsert_update_rejects_body(sheet_vault, vault_dir):
+    _row(vault_dir, "Nova - MLE", "company: Nova\nrole: MLE\nstatus: Saved\n")
+    with pytest.raises(SheetError, match="body"):
+        sheets.upsert(sheet_vault, "jobs",
+                      {"company": "Nova", "role": "MLE", "status": "Applied"},
+                      body="New story paragraph.")
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 10 — '## Log' heading match must be
+# line-anchored (not substring, so "## Logistics" is never mistaken for
+# it), and the line must land at the end of the actual Log section, not
+# unconditionally at the end of the body.
+# ---------------------------------------------------------------------------
+
+def test_upsert_log_line_lands_under_log_section_before_later_sections(
+    sheet_vault, vault_dir
+):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n",
+             body="Story.\n\n## Log\n"
+                  "- 2026-07-10 status: (new) → Saved (agent: claude)\n\n"
+                  "## Notes\nSome notes here.\n")
+    sheets.upsert(sheet_vault, "jobs",
+                 {"company": "Nova", "role": "MLE", "status": "Applied"})
+    after = p.read_text(encoding="utf-8")
+    log_idx = after.index("## Log")
+    notes_idx = after.index("## Notes")
+    new_line_idx = after.index("Saved → Applied")
+    assert log_idx < new_line_idx < notes_idx
+
+
+def test_upsert_log_heading_not_confused_with_logistics(sheet_vault, vault_dir):
+    p = _row(vault_dir, "Nova - MLE",
+             "company: Nova\nrole: MLE\nstatus: Saved\n",
+             body="Intro.\n\n## Logistics\nAddress and travel details.\n")
+    sheets.upsert(sheet_vault, "jobs",
+                 {"company": "Nova", "role": "MLE", "status": "Applied"})
+    after = p.read_text(encoding="utf-8")
+    assert after.count("## Log") == 2          # "## Logistics" + new "## Log"
+    assert "## Logistics\nAddress and travel details." in after
+    logistics_idx = after.index("## Logistics")
+    new_log_idx = after.rindex("## Log")
+    assert new_log_idx > logistics_idx
+    assert "Saved → Applied" in after
+
+
+# ---------------------------------------------------------------------------
+# Review fix wave: Important 11 — spec-promised quarantine tests that were
+# missing: (a) agent _schema.md write outside Claude/ blocked, (b) filename
+# rendering cannot escape the sheet folder, (c) Claude-planted schema
+# ignored (covered above by test_discover_sheets_ignores_claude_planted_schema,
+# repeated here against the raw write path per the finding).
+# ---------------------------------------------------------------------------
+
+def test_schema_md_write_outside_claude_blocked(sheet_vault):
+    with pytest.raises(VaultError, match="outside Claude/"):
+        sheet_vault.write("Projects/_schema.md", "sheet: evil\n")
+
+
+def test_upsert_filename_cannot_escape_sheet_folder(sheet_vault, vault_dir):
+    out = sheets.upsert(sheet_vault, "jobs",
+                        {"company": "../../evil", "role": "x", "status": "Saved"})
+    assert out["result"] == "created"
+    assert out["path"].startswith("Job Search/Applications/")
+    remainder = out["path"][len("Job Search/Applications/"):]
+    # Sanitized to a flat filename — no directory separator survives, so the
+    # path can't escape the sheet folder no matter what the caller supplies.
+    assert "/" not in remainder and "\\" not in remainder
+    assert not (vault_dir / "evil").exists()
+
+
+def test_sheet_name_path_escape_attempt_is_unknown_sheet(sheet_vault):
+    # The sheet name maps to a folder server-side via the registry — it is
+    # never used as a raw path — so a traversal attempt just fails to match
+    # any registered sheet rather than escaping anywhere.
+    with pytest.raises(SheetError, match="Unknown sheet"):
+        sheets.upsert(sheet_vault, "../../Claude/Evil", {"company": "x"})
+
+
+def test_claude_planted_schema_ignored_by_get_schema(vault_dir):
+    # Same sort-order trap as test_discover_sheets_ignores_claude_planted_schema:
+    # "Applications" sorts before "Claude/Sneaky", so the Claude-planted
+    # duplicate is processed second and would shadow the real folder under a
+    # naive last-write-wins registry.
+    real = vault_dir / "Applications"
+    real.mkdir()
+    (real / "_schema.md").write_text(JOBS_SCHEMA, encoding="utf-8")
+    claude_sheet = vault_dir / "Claude" / "Sneaky"
+    claude_sheet.mkdir(parents=True)
+    (claude_sheet / "_schema.md").write_text(
+        "---\nsheet: jobs\nfilename: \"{x}\"\nkey: [x]\ncolumns:\n"
+        "  x: {type: string}\n---\n",
+        encoding="utf-8",
+    )
+    v = Vault(vault_dir)
+    # get_schema must still resolve the real, human-blessed sheet.
+    assert sheets.get_schema(v, "jobs").folder == "Applications"

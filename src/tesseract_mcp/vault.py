@@ -70,7 +70,11 @@ class Vault:
             )
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp-write")
-        tmp.write_text(content, encoding="utf-8")
+        # newline="\n": Path.write_text's default newline translation
+        # rewrites every LF in `content` as the platform line ending, so on
+        # Windows the first patch of a pre-existing LF file silently
+        # rewrites every line as CRLF. Force LF regardless of platform.
+        tmp.write_text(content, encoding="utf-8", newline="\n")
         os.replace(tmp, path)
         return path
 
@@ -86,6 +90,6 @@ class Vault:
         if path.is_dir():
             raise VaultError(f"'{relative}' is a directory, not a note.")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
+        with path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(content)
         return path

@@ -109,3 +109,23 @@ def test_write_is_atomic_no_tmp_left_behind(vault):
     assert vault.read("Claude/Inbox/atomic.md") == "v2"
     leftovers = list(vault.root.rglob("*.tmp-write"))
     assert leftovers == []
+
+
+def test_write_preserves_lf_line_endings_on_windows(vault):
+    """Regression: Path.write_text's default newline translation rewrites
+    every '\\n' as os.linesep, so on Windows the first patch of a
+    pre-existing LF file silently turned every line into CRLF. Bytes-level
+    check — a str-level read would hide this via universal-newline
+    translation on the way back in."""
+    vault.write("Claude/Inbox/lf.md", "line one\nline two\nline three\n")
+    raw = (vault.root / "Claude" / "Inbox" / "lf.md").read_bytes()
+    assert b"\r\n" not in raw
+    assert raw == b"line one\nline two\nline three\n"
+
+
+def test_append_preserves_lf_line_endings_on_windows(vault):
+    vault.append("Claude/Inbox/lf-append.md", "line one\n")
+    vault.append("Claude/Inbox/lf-append.md", "line two\n")
+    raw = (vault.root / "Claude" / "Inbox" / "lf-append.md").read_bytes()
+    assert b"\r\n" not in raw
+    assert raw == b"line one\nline two\n"

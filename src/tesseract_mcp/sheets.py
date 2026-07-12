@@ -96,16 +96,43 @@ def load_schema(vault: Vault, folder_rel: str) -> Schema:
     )
 
 
-def discover_sheets(vault: Vault) -> dict[str, str]:
-    found: dict[str, str] = {}
+def _scan_schema_folders(vault: Vault) -> tuple[dict[str, str], list[dict]]:
+    """(good sheet-name -> folder registry, bad-folder reports).
+
+    Every _schema.md is loaded independently: agents cannot write outside
+    Claude/, so the Claude/ subtree is never eligible to register a sheet
+    (a Claude-planted _schema.md is ignored, not just harmless — it can
+    never shadow a real sheet). A malformed schema in one folder is
+    reported and skipped rather than bricking every sheet tool. Duplicate
+    sheet names among successfully-loaded schemas raise — silent last-wins
+    would let a bad-actor or copy-pasted schema shadow a real sheet.
+    """
+    good: dict[str, str] = {}
+    bad: list[dict] = []
     for path in sorted(vault.root.rglob(SCHEMA_FILE)):
         rel_parts = path.relative_to(vault.root).parts
         if SKIP_DIRS & set(rel_parts):
             continue
         folder = "/".join(rel_parts[:-1])
-        schema = load_schema(vault, folder)
-        found[schema.name] = folder
-    return found
+        if vault.in_claude(folder):
+            continue
+        try:
+            schema = load_schema(vault, folder)
+        except SheetError as e:
+            bad.append({"folder": folder, "error": str(e)})
+            continue
+        if schema.name in good:
+            raise SheetError(
+                f"Duplicate sheet name '{schema.name}': registered in both "
+                f"'{good[schema.name]}' and '{folder}'."
+            )
+        good[schema.name] = folder
+    return good, bad
+
+
+def discover_sheets(vault: Vault) -> dict[str, str]:
+    good, _ = _scan_schema_folders(vault)
+    return good
 
 
 def get_schema(vault: Vault, sheet_name: str) -> Schema:
@@ -156,7 +183,23 @@ def _check_value(name: str, col: Column, value) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise SheetError(f"Field '{name}': expected number, got '{value!r}'.")
         return
-    # string / url
+    if col.type == "url":
+        if (not isinstance(value, str) or not value
+                or any(c.isspace() for c in value)):
+            raise SheetError(
+                f"Field '{name}': expected a URL with no whitespace, "
+                f"got '{value!r}'.")
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise SheetError(
+                f"Field '{name}': expected an http(s) URL with a host, "
+                f"got '{value!r}'.")
+        if col.max_length and len(value) > col.max_length:
+            raise SheetError(
+                f"Field '{name}': exceeds max_length {col.max_length} "
+                f"({len(value)} chars).")
+        return
+    # string
     if not isinstance(value, str):
         raise SheetError(f"Field '{name}': expected {col.type}, got '{value!r}'.")
     if col.max_length and len(value) > col.max_length:
@@ -265,18 +308,35 @@ def _yaml_line(key: str, value) -> str:
     return yaml.safe_dump({key: value}, sort_keys=False).strip()
 
 
+_KEY_LINE = re.compile(r"^([A-Za-z_][\w-]*):")
+
+
 def _patch_lines(fm_lines: list[str], updates: dict) -> list[str]:
-    """Replace top-level 'key: value' lines; append keys not present."""
+    """Replace top-level 'key: value' lines; append keys not present.
+
+    A key's value may span continuation lines (block lists/maps, e.g.
+    `tags:` followed by `- a` / `- b`). When replacing such a key, those
+    continuation lines must be consumed along with the key line — otherwise
+    they're left behind under the new value, orphaned into invalid/corrupt
+    YAML. A line belongs to the previous key's value iff it doesn't itself
+    start a new top-level `key:` line.
+    """
     done: set[str] = set()
     out: list[str] = []
-    for line in fm_lines:
-        m = re.match(r"^([A-Za-z_][\w-]*):", line)
+    i, n = 0, len(fm_lines)
+    while i < n:
+        line = fm_lines[i]
+        m = _KEY_LINE.match(line)
         if m and m.group(1) in updates:
             key = m.group(1)
             out.append(_yaml_line(key, updates[key]))
             done.add(key)
-        else:
-            out.append(line)
+            i += 1
+            while i < n and not _KEY_LINE.match(fm_lines[i]):
+                i += 1
+            continue
+        out.append(line)
+        i += 1
     for key, value in updates.items():
         if key not in done:
             out.append(_yaml_line(key, value))
@@ -291,10 +351,43 @@ def _log_line(field_changes: dict, agent: str, now: datetime) -> str | None:
     return f"- {now:%Y-%m-%d} status: {frm} → {st['to']} (agent: {agent})"
 
 
+_LOG_HEADING = re.compile(r"^## Log[ \t]*$", re.MULTILINE)
+_ANY_HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
+
+
 def _append_log(body: str, line: str) -> str:
-    if "## Log" not in body:
+    """Append one line to the '## Log' section.
+
+    Line-anchored heading match — "## Logistics" must never be mistaken
+    for "## Log". If a real "## Log" heading exists, the line lands at the
+    end of *that* section (right before the next heading), even when later
+    sections (e.g. "## Notes") follow it. Only when no "## Log" heading
+    exists at all is one created, at the end of the body.
+    """
+    m = _LOG_HEADING.search(body)
+    if m is None:
         return body.rstrip("\n") + "\n\n## Log\n" + line + "\n"
-    return body.rstrip("\n") + "\n" + line + "\n"
+    next_heading = _ANY_HEADING.search(body, m.end())
+    if next_heading is None:
+        return body.rstrip("\n") + "\n" + line + "\n"
+    section_end = next_heading.start()
+    section = body[m.end():section_end].rstrip("\n")
+    new_section = (section + "\n" + line + "\n\n") if section else ("\n" + line + "\n\n")
+    return body[:m.end()] + new_section + body[section_end:]
+
+
+def _normalize_value(value):
+    """Isoformat date/datetime values.
+
+    yaml parses unquoted YYYY-MM-DD frontmatter as datetime.date (and
+    full timestamps as datetime.datetime). Left un-normalized these leak
+    into changed-maps returned over MCP (not JSON-serializable) and break
+    comparisons against the agent-supplied strings in eq/ne/in/nin/changed
+    calc (a date object never equals its own isoformat string).
+    """
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
 
 
 def upsert(vault: Vault, sheet: str, fields: dict, body: str | None = None,
@@ -313,7 +406,10 @@ def upsert(vault: Vault, sheet: str, fields: dict, body: str | None = None,
         rel = f"{schema.folder}/{candidate}.md"
         meta = {**merged,
                 "created": f"{now:%Y-%m-%d %H:%M}", "agent": agent}
-        fm = yaml.safe_dump(meta, sort_keys=False)
+        # Single serialization convention shared with the patch path
+        # (_yaml_line): unquoted YYYY-MM-DD dates, so create and patch never
+        # disagree on how a date round-trips through yaml.safe_load.
+        fm = "".join(_yaml_line(k, v) + "\n" for k, v in meta.items())
         changed = {k: {"from": None, "to": v} for k, v in merged.items()}
         text_body = body if body is not None else ""
         log = _log_line(changed, agent, now)
@@ -323,12 +419,23 @@ def upsert(vault: Vault, sheet: str, fields: dict, body: str | None = None,
                     confirm_outside_claude=True)
         return {"result": "created", "path": rel, "changed": changed}
 
+    if body is not None:
+        raise SheetError(
+            "body may only be supplied on create; omit it when updating an "
+            "existing row — sheet_upsert never edits an existing body "
+            "(the '## Log' status append is the sole exception)."
+        )
+    # created is server-stamped on create and never patched; agent is
+    # server-stamped from the `agent` kwarg below, not from caller-supplied
+    # fields — strip both so they can't leak into the diff or the file.
+    merged.pop("created", None)
+    merged.pop("agent", None)
     validate_fields(schema, merged, require_required=False)
     text = vault.read(rel)
     fm_lines, note_body = _split(text)
     old = parse_frontmatter(text)
-    changed = {k: {"from": old.get(k), "to": v}
-               for k, v in merged.items() if old.get(k) != v}
+    changed = {k: {"from": _normalize_value(old.get(k)), "to": v}
+               for k, v in merged.items() if _normalize_value(old.get(k)) != v}
     if not changed:
         return {"result": "updated", "path": rel, "changed": {}}
     new_fm = _patch_lines(fm_lines, {k: v["to"] for k, v in changed.items()})
@@ -350,6 +457,11 @@ def _matches(col_type: str | None, actual, op: str, expected) -> bool:
         return (actual in (None, "")) is bool(expected)
     if actual in (None, ""):
         return op in ("ne", "nin")
+    # yaml parses unquoted dates as datetime.date; normalize before ANY
+    # comparison operator so eq/ne/in/nin agree with the ordering ops
+    # (a stored date must equal the same YYYY-MM-DD string a filter passes).
+    actual = _normalize_value(actual)
+    expected = _normalize_value(expected)
     if op == "eq":
         return actual == expected
     if op == "ne":
@@ -360,11 +472,6 @@ def _matches(col_type: str | None, actual, op: str, expected) -> bool:
         return actual not in expected
     if op == "contains":
         return str(expected).casefold() in str(actual).casefold()
-    if col_type == "date":
-        if hasattr(actual, "isoformat"):
-            actual = actual.isoformat()
-        if hasattr(expected, "isoformat"):
-            expected = expected.isoformat()
     return {"lt": actual < expected, "lte": actual <= expected,
             "gt": actual > expected, "gte": actual >= expected}[op]
 
@@ -401,10 +508,13 @@ def query(vault: Vault, sheet: str, filters: dict | None = None,
 
 def schema_info(vault: Vault, sheet: str | None = None) -> dict:
     if sheet is None:
-        registry = discover_sheets(vault)
-        return {name: {"folder": folder,
+        registry, bad = _scan_schema_folders(vault)
+        info = {name: {"folder": folder,
                        "rows": len(iter_rows(vault, load_schema(vault, folder)))}
                 for name, folder in registry.items()}
+        if bad:
+            info["invalid"] = bad
+        return info
     s = get_schema(vault, sheet)
     path = vault.resolve(f"{s.folder}/{SCHEMA_FILE}")
     _, instructions = _split(path.read_text(encoding="utf-8"))
