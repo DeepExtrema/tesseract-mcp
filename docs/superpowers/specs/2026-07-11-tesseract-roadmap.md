@@ -65,8 +65,8 @@ Each layer only depends downward. A milestone belongs to exactly one layer.
 |---|---|---|---|---|
 | M0 | Ops hardening | substrate | [2026-07-11-ops-hardening-design.md](2026-07-11-ops-hardening-design.md) | in progress — code shipped, sweep/schedule close-out pending |
 | M1 | Sheets v1 (jobs) | records | [2026-07-11-structured-sheets-design.md](2026-07-11-structured-sheets-design.md) | **shipped 2026-07-11** — live vault clean, 60 rows validated |
-| M2 | Cowork onboarding | workers | [2026-07-11-cowork-onboarding-design.md](2026-07-11-cowork-onboarding-design.md) | spec ready |
-| M3 | Discipline hooks | rituals | [2026-07-11-discipline-hooks-design.md](2026-07-11-discipline-hooks-design.md) | spec ready |
+| M2 | Cowork onboarding | workers | [2026-07-11-cowork-onboarding-design.md](2026-07-11-cowork-onboarding-design.md) | config done (Desktop, existing registration) — C2 acceptance run awaits Taimoor |
+| M3 | Discipline hooks | rituals | [2026-07-11-discipline-hooks-design.md](2026-07-11-discipline-hooks-design.md) | **shipped 2026-07-11** — hooks installed + digest sections live; D5 scheduling gated on manual week |
 | M4 | Ingest loop | memory | [briefs](2026-07-11-usage-layer-briefs.md#m4-ingest-loop) | brief |
 | M5 | Projects sheet | records | [briefs](2026-07-11-usage-layer-briefs.md#m5-projects-sheet) | brief |
 | M6 | Retrieval upgrade | substrate | [briefs](2026-07-11-usage-layer-briefs.md#m6-retrieval-upgrade) | brief, evidence-gated |
