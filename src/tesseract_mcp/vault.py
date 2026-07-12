@@ -9,6 +9,7 @@ Two rules are enforced in code, not by convention:
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 
@@ -75,7 +76,17 @@ class Vault:
         # Windows the first patch of a pre-existing LF file silently
         # rewrites every line as CRLF. Force LF regardless of platform.
         tmp.write_text(content, encoding="utf-8", newline="\n")
-        os.replace(tmp, path)
+        # Obsidian/LiveSync/antivirus briefly lock notes on Windows, making
+        # os.replace raise PermissionError (WinError 5). Retry with backoff
+        # before giving up — caretaker sweeps run while Obsidian is open.
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
         return path
 
     def append(

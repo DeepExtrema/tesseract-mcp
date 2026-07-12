@@ -129,3 +129,35 @@ def test_append_preserves_lf_line_endings_on_windows(vault):
     raw = (vault.root / "Claude" / "Inbox" / "lf-append.md").read_bytes()
     assert b"\r\n" not in raw
     assert raw == b"line one\nline two\n"
+
+
+def test_write_retries_transient_windows_lock(vault, monkeypatch):
+    # Obsidian/LiveSync briefly lock notes; os.replace then raises
+    # PermissionError (WinError 5). Two transient failures must not crash.
+    import os as os_mod
+    from tesseract_mcp import vault as vault_mod
+    real_replace = os_mod.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(vault_mod.os, "replace", flaky)
+    monkeypatch.setattr(vault_mod.time, "sleep", lambda s: None)
+    vault.write("Claude/Inbox/lock-test.md", "content")
+    assert calls["n"] == 3
+    assert vault.read("Claude/Inbox/lock-test.md") == "content"
+
+
+def test_write_gives_up_after_persistent_lock(vault, monkeypatch):
+    from tesseract_mcp import vault as vault_mod
+    monkeypatch.setattr(vault_mod.os, "replace",
+                        lambda s, d: (_ for _ in ()).throw(
+                            PermissionError(5, "Access is denied")))
+    monkeypatch.setattr(vault_mod.time, "sleep", lambda s: None)
+    import pytest as _pytest
+    with _pytest.raises(PermissionError):
+        vault.write("Claude/Inbox/lock-test2.md", "content")
