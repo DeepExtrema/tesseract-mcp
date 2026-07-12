@@ -37,6 +37,19 @@ Requires the `tesseract` MCP server.
    `## New graph activity` — `new_entities` notes (entity names are the
    filename stems), `[[wikilinked]]`.
 
+   `## Follow-ups due` — job pipeline actions overdue today:
+   `sheet_query("jobs", {"next_follow_up": {"lte": "<today>"}, "status":
+   {"nin": ["Rejected", "Ghosted", "Withdrawn"]}})`, each row rendered as
+   `[[<note>]] — <company> <role> (<status>, due <next_follow_up>)`.
+   Degrade gracefully: if the `jobs` sheet or the `sheet_query` tool is
+   unavailable, render `⚠ Follow-ups: unavailable` — never fail the digest.
+
+   `## Discipline meter` — sessions vs. logs, last 7 days: count
+   `Claude/Sessions/` notes whose filename date falls in the window and
+   state it plainly ("N session logs filed this week"). If zero, nudge:
+   "no session logs this week — the vault only compounds when work is
+   filed." Omit judgment beyond that one line.
+
    `## Suggested questions` — 2–3 questions the vault is NEWLY equipped
    to answer, inferred from recent changes and new entities. Write each as
    a one-liner Taimoor can paste straight into `/recall`.
