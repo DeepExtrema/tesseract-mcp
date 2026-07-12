@@ -69,6 +69,18 @@ def test_load_manifest_drops_legacy_caretaker_entries(vault):
     assert "Claude/Librarian.md" not in loaded["failures"]
 
 
+def test_load_manifest_normalizes_missing_keys(vault):
+    """A hand-repaired manifest may lack a top-level key; run() indexes
+    both directly (failures.clear/.get), so load must guarantee them."""
+    indexer._manifest_path(vault.root).write_text('{"hashes": {}}', encoding="utf-8")
+    loaded = indexer.load_manifest(vault.root)
+    assert loaded["failures"] == {}
+    assert loaded["hashes"] == {}
+    # retry_failures path must not KeyError on such a manifest
+    counts = indexer.run(vault, FakeExtractor(), retry_failures=True)
+    assert counts["failed"] == 0
+
+
 def test_run_processes_all_then_nothing(vault):
     fx = FakeExtractor({"Daily.md": Extraction([ACME], [])})
     counts = indexer.run(vault, fx)
