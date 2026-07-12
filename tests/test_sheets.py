@@ -601,3 +601,25 @@ def test_claude_planted_schema_ignored_by_get_schema(vault_dir):
     v = Vault(vault_dir)
     # get_schema must still resolve the real, human-blessed sheet.
     assert sheets.get_schema(v, "jobs").folder == "Applications"
+
+
+def test_check_accepts_unquoted_yaml_dates(sheet_vault, vault_dir):
+    # yaml parses unquoted dates to datetime.date; validation must accept
+    # them - real Obsidian rows are written unquoted (2026-07-11 migration).
+    _row(vault_dir, "Dated - Row",
+         "company: Dated\nrole: Row\nstatus: Applied\ndate_applied: 2026-04-20\n")
+    assert sheets.check(sheet_vault) == 0
+
+
+def test_validate_treats_null_optional_as_absent(sheet_vault, vault_dir):
+    # 'next_follow_up:' with no value parses to None - absent, not invalid.
+    _row(vault_dir, "Nully - Row",
+         "company: Nully\nrole: Row\nstatus: Saved\nnext_follow_up:\n")
+    assert sheets.check(sheet_vault) == 0
+
+
+def test_validate_null_required_still_missing(sheet_vault):
+    s = sheets.get_schema(sheet_vault, "jobs")
+    with pytest.raises(sheets.SheetError, match="company"):
+        sheets.validate_fields(s, {"company": None, "role": "R",
+                                   "status": "Saved"}, require_required=True)

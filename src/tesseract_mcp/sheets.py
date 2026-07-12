@@ -13,7 +13,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import yaml
@@ -171,6 +171,11 @@ def _check_value(name: str, col: Column, value) -> None:
                 f"Field '{name}': expected one of {col.values}, got '{value}'.")
         return
     if col.type == "date":
+        # yaml parses unquoted frontmatter dates to datetime.date — the
+        # check/validation path must accept both forms (upsert callers
+        # pass strings; existing rows carry date objects).
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return
         if not isinstance(value, str) or not _DATE.match(value):
             raise SheetError(
                 f"Field '{name}': expected date YYYY-MM-DD, got '{value}'.")
@@ -218,10 +223,13 @@ def validate_fields(schema: Schema, fields: dict, *, require_required: bool) -> 
                 f"Field '{name}' is not declared in sheet '{schema.name}' "
                 f"(columns: {sorted(schema.columns)}; standard: "
                 f"{sorted(STANDARD_COLUMNS)}).")
+        if value is None:
+            # 'field:' with no value parses to None — absent, not invalid.
+            continue
         _check_value(name, col, value)
     if require_required:
         missing = [n for n, c in schema.columns.items()
-                   if c.required and n not in fields]
+                   if c.required and fields.get(n) is None]
         if missing:
             raise SheetError(f"Missing required field(s): {missing}.")
     return fields
