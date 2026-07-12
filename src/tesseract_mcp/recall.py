@@ -8,6 +8,8 @@ Spec: docs/superpowers/specs/2026-07-10-recall-harness-design.md.
 
 from __future__ import annotations
 
+import argparse
+import sys
 from datetime import datetime, timedelta
 
 from . import librarian as librarian_mod
@@ -158,3 +160,52 @@ def resume_bundle(vault: Vault, project: str, limit: int = 10) -> dict:
         "tasks": _section(_open_tasks),
         "entities": _section(_entities),
     }
+
+
+def context_block(vault: Vault, project: str | None, budget: int = 2000) -> str:
+    """Hook-friendly context snippet: latest sessions, open tasks, decisions."""
+    if not project:
+        return ""
+    bundle = resume_bundle(vault, project, limit=10)
+    parts: list[str] = []
+    sessions = bundle.get("sessions") or {}
+    if sessions.get("status") == "ok":
+        for note in sessions.get("notes", [])[:3]:
+            title = note["path"].rsplit("/", 1)[-1].removesuffix(".md")
+            parts.append(f"Session: {title} — {note.get('excerpt', '')[:300]}")
+    tasks_sec = bundle.get("tasks") or {}
+    if tasks_sec.get("status") == "ok":
+        for task in tasks_sec.get("tasks", [])[:5]:
+            parts.append(f"Open task: {task['text']}")
+    decisions = bundle.get("decisions") or {}
+    if decisions.get("status") == "ok":
+        parts.extend(decisions.get("lines", [])[:3])
+    text = "\n".join(parts)
+    if len(text) <= budget:
+        return text
+    cut = text[:budget]
+    boundary = cut.rfind("\n")
+    return cut[:boundary] if boundary > 0 else cut
+
+
+def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    try:
+        parser = argparse.ArgumentParser(
+            description="Recall harness helpers for hooks and skills.")
+        parser.add_argument("--vault", required=True)
+        parser.add_argument("--context", action="store_true")
+        parser.add_argument("--project")
+        parser.add_argument("--budget", type=int, default=2000)
+        args = parser.parse_args()
+        if args.context:
+            block = context_block(Vault(args.vault), args.project, budget=args.budget)
+            print(block, end="")
+    except Exception:
+        return
+
+
+if __name__ == "__main__":
+    main()

@@ -170,3 +170,33 @@ def test_resume_entities_with_populated_graph_cache(vault, vault_dir):
         "path": "Claude/Graph/Projects/Tesseract.md",
         "summary": "The mind database project.",
     }]
+
+
+def test_context_block_names_latest_session(vault):
+    from tesseract_mcp import notes
+
+    notes.log_session(vault, "Fixed the flux capacitor", "Did things.",
+                      "tesseract-mcp", [])
+    block = recall.context_block(vault, "tesseract-mcp")
+    assert "flux capacitor" in block
+    assert len(block) <= 2000
+
+
+def test_context_block_budget_truncates(vault):
+    from tesseract_mcp import notes
+
+    notes.log_session(vault, "Session", "x" * 5000, "p", [])
+    assert len(recall.context_block(vault, "p", budget=500)) <= 500
+
+
+def test_context_cli_survives_missing_vault(tmp_path):
+    import subprocess
+    import sys
+
+    r = subprocess.run(
+        [sys.executable, "-m", "tesseract_mcp.recall",
+         "--vault", str(tmp_path / "nope"), "--context"],
+        capture_output=True, text=True, env={**os.environ,
+                                             "PYTHONPATH": "src"},
+    )
+    assert r.returncode == 0 and r.stdout.strip() == ""

@@ -488,3 +488,19 @@ def test_cli_dry_run_survives_cp1252_console(vault_dir, monkeypatch):
     out = out_buf.getvalue().decode("cp1252")
     assert "## Sweep" in out
     assert "health:" in out
+
+
+def test_invalid_sheet_rows_health(vault_dir):
+    folder = vault_dir / "Records"
+    folder.mkdir()
+    (folder / "_schema.md").write_text(
+        "---\nsheet: things\nfilename: \"{name}\"\nkey: [name]\n"
+        "columns:\n  name: {type: string, required: true}\n---\n",
+        encoding="utf-8")
+    (folder / "Bad.md").write_text("---\nextra: x\n---\n", encoding="utf-8")
+    vault = Vault(vault_dir)
+    assert librarian.count_invalid_sheet_rows(vault) == 1
+
+
+def test_invalid_sheet_rows_zero_without_sheets(vault):
+    assert librarian.count_invalid_sheet_rows(vault) == 0
