@@ -102,6 +102,28 @@ def test_check_reports_drift_when_our_entry_differs(tmp_path):
     assert len(data["hooks"]["Stop"]) == 1
 
 
+def test_classify_reports_present_when_ours_is_not_first_hook_in_entry(tmp_path):
+    """_find_ours may match an entry whose 'hooks' array has ours at index 1;
+    classify() must compare *that* hook's command, not unconditionally index 0."""
+    settings_path = tmp_path / "settings.json"
+    expected = hook_sync.expected_command("SessionStart")
+    original = {
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [
+                    {"type": "command", "command": "other-tool"},
+                    {"type": "command", "command": expected},
+                ]}
+            ],
+        }
+    }
+    settings_path.write_text(json.dumps(original), encoding="utf-8")
+
+    result = hook_sync.sync(settings_path, check=True)
+    assert "SessionStart" in result["present"]
+    assert "SessionStart" not in result["drift"]
+
+
 def test_second_install_is_idempotent(tmp_path):
     settings_path = tmp_path / "settings.json"
     hook_sync.sync(settings_path, check=False)

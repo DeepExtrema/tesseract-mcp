@@ -63,11 +63,12 @@ def _read_settings(path: Path) -> dict:
 
 
 def _find_ours(entries: list, marker: str) -> dict | None:
-    """The array entry (if any) whose command mentions our script filename."""
+    """The individual hook dict (if any) whose command mentions our script
+    filename, regardless of its position within the entry's "hooks" array."""
     for entry in entries:
         for h in entry.get("hooks", []):
             if marker in h.get("command", ""):
-                return entry
+                return h
     return None
 
 
@@ -82,7 +83,7 @@ def classify(settings: dict, repo_root: Path = REPO_ROOT) -> dict:
         if ours is None:
             result["missing"].append(event)
             continue
-        actual = (ours.get("hooks") or [{}])[0].get("command", "")
+        actual = ours.get("command", "")
         if actual == expected:
             result["present"].append(event)
         else:
