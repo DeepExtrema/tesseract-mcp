@@ -159,12 +159,16 @@ def recall_bundle(
 
 
 @mcp.tool()
-def sheet_upsert(sheet: str, fields: dict, body: str | None = None) -> dict:
+def sheet_upsert(
+    sheet: str, fields: dict, body: str | None = None, agent: str = "claude"
+) -> dict:
     """Create or update one row in a registered sheet (a human-blessed folder
     with _schema.md). Validates every field against the schema; finds the
     existing row by key + posting identity; patches only the passed fields.
-    Returns created|updated, the path, and a changed map."""
-    return sheets_mod.upsert(get_vault(), sheet, fields, body=body)
+    `agent` names the calling agent (e.g. "cowork") and is stamped on the
+    row's `agent` field and any '## Log' status line. Returns
+    created|updated, the path, and a changed map."""
+    return sheets_mod.upsert(get_vault(), sheet, fields, body=body, agent=agent)
 
 
 @mcp.tool()

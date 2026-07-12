@@ -308,10 +308,23 @@ def test_sheet_tools_smoke(vault_dir, monkeypatch):
     (folder / "_schema.md").write_text(
         "---\nsheet: things\nfilename: \"{name}\"\nkey: [name]\n"
         "columns:\n  name: {type: string, required: true}\n"
-        "  when: {type: date}\n---\nFile one note per thing.\n",
+        "  when: {type: date}\n"
+        "  status: {type: enum, required: true, values: [New]}\n"
+        "---\nFile one note per thing.\n",
         encoding="utf-8")
-    out = server.sheet_upsert("things", {"name": "First"})
+    out = server.sheet_upsert(
+        "things", {"name": "First", "status": "New"}, agent="cowork"
+    )
     assert out["result"] == "created"
     rows = server.sheet_query("things", {"when": {"missing": True}})
     assert rows[0]["name"] == "First"
     assert "things" in server.sheet_schema()
+    text = server.read_note(out["path"])
+    assert "(agent: cowork)" in text
+    assert "## Log" in text
+
+
+def test_sheet_upsert_tool_schema_has_agent_param():
+    tools = asyncio.run(server.mcp.list_tools())
+    upsert_tool = next(t for t in tools if t.name == "sheet_upsert")
+    assert "agent" in upsert_tool.inputSchema["properties"]
