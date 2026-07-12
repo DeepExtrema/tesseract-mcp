@@ -27,8 +27,9 @@ consolidate error blaming a codex skill-loading bug. Investigation findings:
   whole vault).
 - `search_brain`/`context_bundle` excerpts return `"---"` for semantic-only
   hits: `_excerpt` in `hybrid.py` falls back to the first raw file line, which
-  is the frontmatter delimiter. It also splits `rel` on `"\\"` though vault
-  paths use `/`.
+  is the frontmatter delimiter. (An earlier draft also claimed a `"\\"` path
+  separator bug in the title match; plan-time verification showed line 49
+  already splits on `/` — no fix needed there.)
 - `context_bundle`'s empty `entities`/`related_notes` is NOT a bug: the hit
   notes are among the 265 unindexed, so they have no mentions in graph.db.
   Heals when the index drains.
@@ -70,7 +71,7 @@ permanently broken notes), richer excerpt windows/highlighting.
   refactors to use it.
 - `_excerpt` becomes:
   1. Strip frontmatter once.
-  2. Title match: `rel.rsplit("/", 1)[-1][:-3]` (fixes the `"\\"` split bug)
+  2. Title match: `rel.rsplit("/", 1)[-1][:-3]` (unchanged — already correct)
      -> `"(title match)"` as today.
   3. Line match against **body** lines only (frontmatter lines can no longer
      be returned as excerpts).
