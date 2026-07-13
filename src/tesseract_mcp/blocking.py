@@ -33,3 +33,39 @@ def identity_text(entity: dict) -> str:
 
 def identity_hash(entity: dict) -> str:
     return hashlib.sha256(identity_text(entity).encode("utf-8")).hexdigest()
+
+
+def _load_entity_vectors(state_root: Path) -> dict[str, dict]:
+    p = Path(state_root) / ENTITY_VECTOR_FILE
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _save_entity_vectors(state_root: Path, cache: dict[str, dict]) -> None:
+    p = Path(state_root) / ENTITY_VECTOR_FILE
+    p.write_text(json.dumps(cache), encoding="utf-8")
+
+
+def compute_entity_vectors(
+    entities: list[dict], state_root: Path, embedder: Embedder
+) -> dict[str, list[float]]:
+    cache = _load_entity_vectors(state_root)
+    result: dict[str, list[float]] = {}
+    to_embed: list[dict] = []
+    hashes: dict[str, str] = {}
+    for e in entities:
+        h = identity_hash(e)
+        hashes[e["path"]] = h
+        cached = cache.get(e["path"])
+        if cached and cached["hash"] == h:
+            result[e["path"]] = cached["vec"]
+        else:
+            to_embed.append(e)
+    if to_embed:
+        vecs = embedder.embed_batch([identity_text(e) for e in to_embed])
+        for e, vec in zip(to_embed, vecs):
+            result[e["path"]] = vec
+            cache[e["path"]] = {"hash": hashes[e["path"]], "vec": vec}
+        _save_entity_vectors(state_root, cache)
+    return result
