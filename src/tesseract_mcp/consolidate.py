@@ -8,7 +8,9 @@ from datetime import datetime
 
 import yaml
 
+from . import blocking
 from . import cache
+from . import embeddings as embeddings_mod
 from .extractor import consolidation_extractor
 from .graphstore import (
     GRAPH_ROOT,
@@ -18,7 +20,7 @@ from .graphstore import (
     TYPE_FOLDERS,
     entity_rel_path,
 )
-from .indexer import db_path
+from .indexer import db_path, state_dir
 from .search import parse_frontmatter, body_text
 from .vault import Vault
 
@@ -204,11 +206,21 @@ def _apply_one(vault: Vault, store: GraphStore, merge: dict, now: datetime) -> N
         vault.write(dup_rel, stub, overwrite=True)
 
 
-def run(vault: Vault, backend, apply: bool = False) -> dict:
+def run(vault: Vault, backend, apply: bool = False, embedder=None) -> dict:
     entities = gather_entities(vault)
-    merges = propose_merges(backend, entities)
-    result = {"entities": len(entities), "proposed": merges, "applied": False,
-              "merged_entities": 0}
+    result = {"entities": len(entities), "proposed": [], "applied": False,
+              "merged_entities": 0, "skipped_batches": 0}
+    if not entities:
+        return result
+    if embedder is None:
+        embedder = embeddings_mod.SentenceTransformerEmbedder()
+    state_root = state_dir(vault.root)
+    vectors = blocking.compute_entity_vectors(entities, state_root, embedder)
+    clusters = blocking.candidate_clusters(entities, entities, vectors)
+    batches = blocking.batch_clusters(clusters)
+    merges, skipped = adjudicate_batches(backend, batches, entities)
+    result["proposed"] = merges
+    result["skipped_batches"] = skipped
     if apply and merges:
         store = GraphStore(vault)
         now = datetime.now()

@@ -9,6 +9,11 @@ ORACLE_VM = {"name": "Oracle VM", "type": "organization", "aliases": [], "summar
 ORACLE_DEPLOY = {"name": "Oracle VM deploy", "type": "organization", "aliases": [], "summary": "Deploying it."}
 
 
+class FakeEmbedder:
+    def embed_batch(self, texts):
+        return [[float(len(t)), 1.0] for t in texts]
+
+
 class FakeBackend:
     def __init__(self, reply):
         self.reply = reply
@@ -75,14 +80,23 @@ def test_propose_merges_validates(vault):
 
 def test_dry_run_changes_nothing(vault):
     seed(vault)
-    result = consolidate.run(vault, FakeBackend(MERGE), apply=False)
+    result = consolidate.run(vault, FakeBackend(MERGE), apply=False,
+                             embedder=FakeEmbedder())
     assert result["proposed"] and result["applied"] is False
     assert "Merged into" not in vault.read(entity_rel_path("organization", "Oracle VM deploy"))
 
 
+def test_run_reports_skipped_batches(vault):
+    seed(vault)
+    result = consolidate.run(vault, FakeBackend(MERGE), apply=False,
+                             embedder=FakeEmbedder())
+    assert result["skipped_batches"] == 0
+
+
 def test_apply_merges_mentions_relations_aliases_and_redirects(vault):
     seed(vault)
-    result = consolidate.run(vault, FakeBackend(MERGE), apply=True)
+    result = consolidate.run(vault, FakeBackend(MERGE), apply=True,
+                             embedder=FakeEmbedder())
     assert result["applied"] is True and result["merged_entities"] == 1
     canon = vault.read(entity_rel_path("organization", "Oracle VM"))
     assert "[[B|" in canon                      # dup's mention moved over
@@ -101,14 +115,14 @@ def test_apply_merge_finds_dup_by_filename_when_canonical_has_alias(vault):
     end = canon_text.find("\n---", 3)
     fm = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---"
     vault.write(canon_rel, fm + canon_text[end + 4 :], overwrite=True)
-    consolidate.run(vault, FakeBackend(MERGE), apply=True)
+    consolidate.run(vault, FakeBackend(MERGE), apply=True, embedder=FakeEmbedder())
     dup = vault.read(entity_rel_path("organization", "Oracle VM deploy"))
     assert "merged_into:" in dup
 
 
 def test_cache_rebuild_skips_redirect_stubs(vault, tmp_path):
     seed(vault)
-    consolidate.run(vault, FakeBackend(MERGE), apply=True)
+    consolidate.run(vault, FakeBackend(MERGE), apply=True, embedder=FakeEmbedder())
     db = tmp_path / "g.db"
     cache.rebuild(vault, db)
     names = [e["name"] for e in cache.find_entity(db, "oracle")]
