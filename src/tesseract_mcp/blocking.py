@@ -152,3 +152,20 @@ def candidate_clusters(
         for members in path_clusters
         if len(members) >= 2
     ]
+
+
+def batch_clusters(
+    clusters: list[list[dict]], *, max_entities_per_call: int = MAX_ENTITIES_PER_CALL
+) -> list[list[list[dict]]]:
+    batches: list[list[list[dict]]] = []
+    current: list[list[dict]] = []
+    count = 0
+    for cluster in clusters:
+        if current and count + len(cluster) > max_entities_per_call:
+            batches.append(current)
+            current, count = [], 0
+        current.append(cluster)
+        count += len(cluster)
+    if current:
+        batches.append(current)
+    return batches

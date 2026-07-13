@@ -108,3 +108,21 @@ def test_candidate_clusters_maps_to_entities_and_drops_singletons():
     clusters = blocking.candidate_clusters(ents, ents, vectors)
     assert len(clusters) == 1
     assert {e["path"] for e in clusters[0]} == {"a", "b"}
+
+
+def _cluster(n, tag):
+    return [{"path": f"{tag}{i}", "type": "topic"} for i in range(n)]
+
+
+def test_batch_packs_whole_clusters_under_cap():
+    clusters = [_cluster(3, "a"), _cluster(4, "b"), _cluster(3, "c")]
+    batches = blocking.batch_clusters(clusters, max_entities_per_call=8)
+    # 3+4=7 fits; +3 would be 10>8 -> second batch
+    assert [sum(len(c) for c in b) for b in batches] == [7, 3]
+
+
+def test_batch_never_splits_a_cluster():
+    clusters = [_cluster(6, "a"), _cluster(6, "b")]
+    batches = blocking.batch_clusters(clusters, max_entities_per_call=8)
+    # each batch holds whole clusters; 6+6=12>8 -> one cluster each
+    assert [[len(c) for c in b] for b in batches] == [[6], [6]]
