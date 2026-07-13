@@ -45,6 +45,18 @@ def _section_lines(text: str, header: str) -> list[str]:
     return [l for l in section.splitlines() if l.startswith("- ")]
 
 
+def _entity_summary(text: str) -> str:
+    """Body text between the `# name` H1 and `## Mentions` — the note
+    template writes the entity summary there (not frontmatter)."""
+    end = text.find("\n---", 3)
+    body = text[end + 4:] if end != -1 else text
+    cut = body.find(MENTIONS_HEADER)
+    if cut != -1:
+        body = body[:cut]
+    lines = [l for l in body.splitlines() if not l.startswith("# ")]
+    return "\n".join(lines).strip()
+
+
 def gather_entities(vault: Vault) -> list[dict]:
     out: list[dict] = []
     graph_dir = vault.resolve(GRAPH_ROOT)
@@ -61,7 +73,8 @@ def gather_entities(vault: Vault) -> list[dict]:
         out.append(
             {"name": p.stem, "type": str(meta.get("entity") or "topic"),
              "path": "/".join(p.relative_to(vault.root).parts)[:-3],
-             "aliases": [str(a) for a in aliases]}
+             "aliases": [str(a) for a in aliases],
+             "summary": _entity_summary(text)}
         )
     return out
 

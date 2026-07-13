@@ -95,3 +95,10 @@ def test_cache_rebuild_skips_redirect_stubs(vault, tmp_path):
     names = [e["name"] for e in cache.find_entity(db, "oracle")]
     assert names == ["Oracle VM"]               # stub not an entity anymore
     assert cache.find_entity(db, "oracle")[0]["mention_count"] == 2
+
+
+def test_gather_entities_includes_body_summary(vault):
+    seed(vault)
+    got = {e["name"]: e for e in consolidate.gather_entities(vault)}
+    assert got["Oracle VM"]["summary"] == "Cloud VM."
+    assert got["Oracle VM deploy"]["summary"] == "Deploying it."
