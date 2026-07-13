@@ -60,3 +60,27 @@ def test_changed_identity_is_reembedded(tmp_path):
     changed[0]["summary"] = "DIFFERENT"
     blocking.compute_entity_vectors(changed, tmp_path, emb)
     assert emb.calls[-1] == ["Acme\n\nDIFFERENT"]  # only the changed one
+
+
+def test_candidate_pairs_same_type_only():
+    ents = [
+        {"path": "p1", "type": "person"},
+        {"path": "p2", "type": "person"},
+        {"path": "o1", "type": "organization"},
+    ]
+    vectors = {"p1": [1.0, 0.0], "p2": [1.0, 0.01], "o1": [1.0, 0.0]}
+    pairs = blocking._candidate_pairs(ents, ents, vectors, k=5, threshold=0.85)
+    assert pairs == {("p1", "p2")}  # o1 identical direction but wrong type
+
+
+def test_candidate_pairs_respects_threshold():
+    ents = [{"path": "a", "type": "topic"}, {"path": "b", "type": "topic"}]
+    vectors = {"a": [1.0, 0.0], "b": [0.0, 1.0]}  # cosine 0.0
+    assert blocking._candidate_pairs(ents, ents, vectors, k=5, threshold=0.85) == set()
+
+
+def test_candidate_pairs_top_k_limit():
+    ents = [{"path": f"p{i}", "type": "topic"} for i in range(6)]
+    vectors = {f"p{i}": [1.0, i * 0.001] for i in range(6)}  # all near-parallel
+    pairs = blocking._candidate_pairs([ents[0]], ents, vectors, k=2, threshold=0.85)
+    assert len(pairs) == 2  # only p0's 2 nearest, not all 5

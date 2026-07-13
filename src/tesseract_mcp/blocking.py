@@ -69,3 +69,35 @@ def compute_entity_vectors(
             cache[e["path"]] = {"hash": hashes[e["path"]], "vec": vec}
         _save_entity_vectors(state_root, cache)
     return result
+
+
+def _candidate_pairs(
+    slice_entities: list[dict],
+    all_entities: list[dict],
+    vectors: dict[str, list[float]],
+    *,
+    k: int,
+    threshold: float,
+) -> set[tuple[str, str]]:
+    by_type: dict[str, list[dict]] = defaultdict(list)
+    for e in all_entities:
+        by_type[e["type"]].append(e)
+    pairs: set[tuple[str, str]] = set()
+    for s in slice_entities:
+        sv = vectors.get(s["path"])
+        if sv is None:
+            continue
+        sims: list[tuple[float, str]] = []
+        for other in by_type[s["type"]]:
+            if other["path"] == s["path"]:
+                continue
+            ov = vectors.get(other["path"])
+            if ov is None:
+                continue
+            c = _cosine(sv, ov)
+            if c >= threshold:
+                sims.append((c, other["path"]))
+        sims.sort(reverse=True)
+        for _, op in sims[:k]:
+            pairs.add(tuple(sorted((s["path"], op))))
+    return pairs
