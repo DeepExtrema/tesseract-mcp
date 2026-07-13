@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from tesseract_mcp import librarian
+from tesseract_mcp import blocking, librarian
 from tesseract_mcp.vault import Vault
 
 NOW = datetime(2026, 7, 9, 12, 0, 0)
@@ -27,15 +27,24 @@ def _no_model_downloads(monkeypatch):
     monkeypatch.setattr(embeddings_mod, "SentenceTransformerEmbedder", FakeEmbedder)
 
 
-def _throttle_state(baseline: int, last_pass: datetime) -> dict:
-    return {"consolidation": {"entities_at_last_pass": baseline,
-                              "last_pass": last_pass.strftime(librarian.TS_FMT),
-                              "pending_proposals": []}}
-
-
 def test_constants_match_spec():
-    assert librarian.CONSOLIDATE_MIN_NEW_ENTITIES == 15
-    assert librarian.CONSOLIDATE_MAX_AGE_DAYS == 14
+    assert librarian.BACKSTOP_MIN_INTERVAL_DAYS == 14
+    assert blocking.SLICE_SIZE == 200
+    assert blocking.MAX_ENTITIES_PER_CALL == 40
+
+
+def test_backstop_due_on_first_pass():
+    assert librarian._backstop_due({}, NOW) is True
+
+
+def test_backstop_not_due_before_interval():
+    con = {"backstop_last_advance": NOW.strftime(librarian.TS_FMT)}
+    assert librarian._backstop_due(con, NOW + timedelta(days=13)) is False
+
+
+def test_backstop_due_after_interval():
+    con = {"backstop_last_advance": NOW.strftime(librarian.TS_FMT)}
+    assert librarian._backstop_due(con, NOW + timedelta(days=14)) is True
 
 
 def test_load_state_default_when_missing(vault):
@@ -76,41 +85,6 @@ def test_status_survives_corrupt_state_file(vault):
     result = librarian.status(vault)
     assert result["status"] == "state file unreadable"
     assert "error" in result
-
-
-def test_first_pass_runs_when_entities_exist():
-    due, reason = librarian.should_consolidate({"consolidation": {}}, 3, NOW)
-    assert due
-    assert reason == "first pass"
-
-
-def test_no_entities_never_runs():
-    due, _ = librarian.should_consolidate({"consolidation": {}}, 0, NOW)
-    assert not due
-
-
-def test_14_new_entities_skips():
-    due, _ = librarian.should_consolidate(
-        _throttle_state(10, NOW), 24, NOW + timedelta(days=1))
-    assert not due
-
-
-def test_15_new_entities_runs():
-    due, _ = librarian.should_consolidate(
-        _throttle_state(10, NOW), 25, NOW + timedelta(days=1))
-    assert due
-
-
-def test_age_trigger_requires_a_new_entity():
-    due, _ = librarian.should_consolidate(
-        _throttle_state(10, NOW), 10, NOW + timedelta(days=20))
-    assert not due
-
-
-def test_age_trigger_fires_at_14_days_with_one_new_entity():
-    due, _ = librarian.should_consolidate(
-        _throttle_state(10, NOW), 11, NOW + timedelta(days=14))
-    assert due
 
 
 from tesseract_mcp import cache, indexer
@@ -265,33 +239,52 @@ def test_step_failure_is_isolated(vault, monkeypatch):
     assert result["health"]["sweep_errors"]["organize"]
 
 
-def test_consolidation_first_pass_sets_baseline(vault, vault_dir):
+def test_consolidation_first_pass_records_cursor_and_checked(vault, vault_dir):
     _entity_note(vault_dir, "Organizations", "Acme", "organization")
     _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")
-    fake = FakeConsolidator(merges=[{"type": "organization",
-                                     "canonical": "Acme",
+    fake = FakeConsolidator(merges=[{"type": "organization", "canonical": "Acme",
                                      "duplicates": ["Acme Corp"]}])
-    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
-                                 consolidator=fake,
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
                                  embedder=FakeEmbedder(), now=NOW)
     step = result["steps"]["consolidate"]
-    assert step["ran"] and step["reason"] == "first pass"
-    assert step["proposed"] == [{"type": "organization", "canonical": "Acme",
-                                 "duplicates": ["Acme Corp"]}]
-    state = librarian.load_state(vault)
-    assert state["consolidation"]["entities_at_last_pass"] == 2
-    assert state["consolidation"]["pending_proposals"] == step["proposed"]
+    assert step["ran"] and step["proposed"] == [
+        {"type": "organization", "canonical": "Acme", "duplicates": ["Acme Corp"]}]
+    con = librarian.load_state(vault)["consolidation"]
+    assert set(con["checked_hash"]) == {
+        "Claude/Graph/Organizations/Acme",
+        "Claude/Graph/Organizations/Acme Corp"}
+    assert con["pending_proposals"] == step["proposed"]
 
 
-def test_consolidation_skipped_below_threshold(vault, vault_dir):
+def test_second_sweep_skips_when_all_checked_and_backstop_cold(vault, vault_dir):
     _entity_note(vault_dir, "Organizations", "Acme", "organization")
     fake = FakeConsolidator()
     librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
                         embedder=FakeEmbedder(), now=NOW)
-    assert fake.calls == 1
+    calls_after_first = fake.calls
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW)  # nothing new, backstop not due
+    assert fake.calls == calls_after_first
+
+
+def test_changed_entity_reenters_slice(vault, vault_dir):
+    # a second, never-edited same-type entity is required so a candidate
+    # cluster can form at all: candidate_clusters never pairs an entity with
+    # itself, so a lone entity of a type would never reach the consolidator
+    # regardless of whether it re-enters the slice.
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")
+    fake = FakeConsolidator()
     librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
                         embedder=FakeEmbedder(), now=NOW)
-    assert fake.calls == 1
+    # edit the entity body (identity changes) -> it becomes unchecked again
+    note = vault_dir / "Claude" / "Graph" / "Organizations" / "Acme.md"
+    note.write_text(note.read_text(encoding="utf-8").replace("Summary.", "New summary."),
+                    encoding="utf-8")
+    before = fake.calls
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW + timedelta(minutes=1))
+    assert fake.calls > before  # changed identity re-adjudicated
 
 
 def test_apply_sweep_saves_state(vault):
@@ -422,6 +415,13 @@ def test_format_report_failed_step_and_errors():
     assert "- index: FAILED\n" in text
     assert "- consolidate: ran (first pass) — 1 merge proposals\n" in text
     assert "- errors: index: RuntimeError: x\n" in text
+
+
+def test_summarize_steps_includes_skipped_batches():
+    steps = {"consolidate": {"ran": True, "reason": "3 unchecked",
+                             "proposed": [], "skipped_batches": 2}}
+    out = librarian._summarize_steps(steps)
+    assert out["consolidate"]["skipped_batches"] == 2
 
 
 def test_write_report_seeds_and_appends(vault):

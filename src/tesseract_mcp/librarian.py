@@ -15,6 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from . import blocking
 from . import cache
 from . import consolidate as consolidate_mod
 from . import embeddings as embeddings_mod
@@ -26,8 +27,7 @@ from .vault import Vault, VaultError
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 STATE_FILE = "librarian_state.json"
-CONSOLIDATE_MIN_NEW_ENTITIES = 15
-CONSOLIDATE_MAX_AGE_DAYS = 14
+BACKSTOP_MIN_INTERVAL_DAYS = 14
 LIBRARIAN_NOTE = "Claude/Librarian.md"
 REPORT_MAX_SWEEPS = 30
 _NOTE_SEED = ("# Librarian\n\nCaretaker sweep reports (newest last). "
@@ -56,26 +56,13 @@ def save_state(vault: Vault, state: dict) -> None:
     os.replace(tmp, target)
 
 
-def should_consolidate(
-    state: dict, current_entities: int, now: datetime
-) -> tuple[bool, str]:
-    """Throttle: ≥15 new entities since the last pass, or ≥14 days with at
-    least one. First pass runs as soon as any entity exists."""
-    last = state.get("consolidation") or {}
-    baseline = last.get("entities_at_last_pass")
-    if baseline is None:
-        if current_entities > 0:
-            return True, "first pass"
-        return False, "no entities yet"
-    new = max(0, current_entities - baseline)
-    if new >= CONSOLIDATE_MIN_NEW_ENTITIES:
-        return True, f"{new} new entities (threshold {CONSOLIDATE_MIN_NEW_ENTITIES})"
-    last_pass = datetime.strptime(last["last_pass"], TS_FMT)
-    age_days = (now - last_pass).days
-    if new >= 1 and age_days >= CONSOLIDATE_MAX_AGE_DAYS:
-        return True, f"{age_days} days since last pass with {new} new entities"
-    return False, (f"{new} new entities since last pass; "
-                   f"threshold {CONSOLIDATE_MIN_NEW_ENTITIES}")
+def _backstop_due(con: dict, now: datetime) -> bool:
+    """The rolling backstop re-check runs at most once per interval; the
+    unchecked/changed path runs every sweep regardless."""
+    last = con.get("backstop_last_advance")
+    if not last:
+        return True
+    return (now - datetime.strptime(last, TS_FMT)).days >= BACKSTOP_MIN_INTERVAL_DAYS
 
 
 def check_manifest_drift(vault: Vault) -> dict:
@@ -227,22 +214,42 @@ def _ensure_cache(vault: Vault, result: dict) -> dict:
 
 
 def _consolidate_step(
-    vault: Vault, state: dict, consolidator, now: datetime, apply: bool
+    vault: Vault, state: dict, consolidator, now: datetime, apply: bool, embedder
 ) -> dict:
     entities = consolidate_mod.gather_entities(vault)
-    due, reason = should_consolidate(state, len(entities), now)
-    if not due:
-        return {"ran": False, "reason": reason, "proposed": []}
+    if not entities:
+        return {"ran": False, "reason": "no entities", "proposed": [],
+                "skipped_batches": 0}
+    con = state.get("consolidation") or {}
+    checked_hash = dict(con.get("checked_hash") or {})
+    cursor = con.get("cursor")
+    backstop_due = _backstop_due(con, now)
+    state_root = indexer.state_dir(vault.root)
+    vectors = blocking.compute_entity_vectors(entities, state_root, embedder)
+    slice_, new_cursor, used_backstop = blocking.select_slice(
+        entities, checked_hash, cursor, blocking.SLICE_SIZE, backstop_due=backstop_due)
+    if not slice_:
+        return {"ran": False, "reason": "nothing to check", "proposed": [],
+                "skipped_batches": 0}
     if consolidator is None:
         consolidator = extractor_mod.consolidation_extractor()
-    proposed = consolidate_mod.propose_merges(consolidator, entities)
+    clusters = blocking.candidate_clusters(slice_, entities, vectors)
+    batches = blocking.batch_clusters(clusters)
+    proposed, skipped = consolidate_mod.adjudicate_batches(
+        consolidator, batches, entities)
+    reason = f"backstop ({len(slice_)})" if used_backstop else f"{len(slice_)} unchecked"
     if apply:
-        state["consolidation"] = {
-            "entities_at_last_pass": len(entities),
-            "last_pass": now.strftime(TS_FMT),
-            "pending_proposals": proposed,
-        }
-    return {"ran": True, "reason": reason, "proposed": proposed}
+        for e in slice_:
+            checked_hash[e["path"]] = blocking.identity_hash(e)
+        con["checked_hash"] = checked_hash
+        con["cursor"] = new_cursor
+        con["pending_proposals"] = proposed
+        con["last_pass"] = now.strftime(TS_FMT)
+        if used_backstop:
+            con["backstop_last_advance"] = now.strftime(TS_FMT)
+        state["consolidation"] = con
+    return {"ran": True, "reason": reason, "proposed": proposed,
+            "skipped_batches": skipped}
 
 
 def _step(result: dict, name: str, fn) -> None:
@@ -270,6 +277,7 @@ def _summarize_steps(steps: dict) -> dict:
     out["consolidate"] = con if con is None else {
         "ran": con["ran"], "reason": con["reason"],
         "proposed": len(con["proposed"]),
+        "skipped_batches": con.get("skipped_batches", 0),
     }
     return out
 
@@ -388,7 +396,7 @@ def run_sweep(
     _step(result, "cache", lambda: _ensure_cache(vault, result))
 
     _step(result, "consolidate",
-          lambda: _consolidate_step(vault, state, consolidator, now, apply))
+          lambda: _consolidate_step(vault, state, consolidator, now, apply, embedder))
 
     result["health"] = run_health(
         vault, state, result["steps"].get("organize"),
