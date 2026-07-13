@@ -256,35 +256,46 @@ def test_consolidation_first_pass_records_cursor_and_checked(vault, vault_dir):
     assert con["pending_proposals"] == step["proposed"]
 
 
-def test_second_sweep_skips_when_all_checked_and_backstop_cold(vault, vault_dir):
-    _entity_note(vault_dir, "Organizations", "Acme", "organization")
-    fake = FakeConsolidator()
-    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
-                        embedder=FakeEmbedder(), now=NOW)
-    calls_after_first = fake.calls
-    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
-                        embedder=FakeEmbedder(), now=NOW)  # nothing new, backstop not due
-    assert fake.calls == calls_after_first
-
-
-def test_changed_entity_reenters_slice(vault, vault_dir):
-    # a second, never-edited same-type entity is required so a candidate
-    # cluster can form at all: candidate_clusters never pairs an entity with
-    # itself, so a lone entity of a type would never reach the consolidator
-    # regardless of whether it re-enters the slice.
+def test_second_sweep_skips_when_checked_and_backstop_not_due(vault, vault_dir):
+    # two same-type entities so the first sweep actually clusters and calls the
+    # consolidator (a lone entity can never form a cluster)
     _entity_note(vault_dir, "Organizations", "Acme", "organization")
     _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")
     fake = FakeConsolidator()
     librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
                         embedder=FakeEmbedder(), now=NOW)
-    # edit the entity body (identity changes) -> it becomes unchecked again
+    assert fake.calls == 1  # first sweep adjudicated the unchecked cluster
+    # force the backstop clock recent so it is NOT due, then re-sweep unchanged
+    state = librarian.load_state(vault)
+    state["consolidation"]["backstop_last_advance"] = NOW.strftime(librarian.TS_FMT)
+    librarian.save_state(vault, state)
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW + timedelta(days=1))
+    assert fake.calls == 1  # all checked + backstop not due -> no new adjudication
+
+
+def test_changed_entity_reenters_slice(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")  # stable partner
+    fake = FakeConsolidator()
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW)
+    assert fake.calls == 1
+    # turn the backstop OFF so re-adjudication can ONLY come from a checked_hash mismatch
+    state = librarian.load_state(vault)
+    state["consolidation"]["backstop_last_advance"] = NOW.strftime(librarian.TS_FMT)
+    librarian.save_state(vault, state)
+    # a no-change sweep makes no new call (eager path is quiet when nothing changed)
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW + timedelta(minutes=1))
+    assert fake.calls == 1
+    # edit Acme's body: identity changes -> unchecked -> eager slice -> re-adjudicated
     note = vault_dir / "Claude" / "Graph" / "Organizations" / "Acme.md"
     note.write_text(note.read_text(encoding="utf-8").replace("Summary.", "New summary."),
                     encoding="utf-8")
-    before = fake.calls
     librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
-                        embedder=FakeEmbedder(), now=NOW + timedelta(minutes=1))
-    assert fake.calls > before  # changed identity re-adjudicated
+                        embedder=FakeEmbedder(), now=NOW + timedelta(minutes=2))
+    assert fake.calls == 2  # only the changed identity triggered a fresh call
 
 
 def test_apply_sweep_saves_state(vault):
