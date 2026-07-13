@@ -11,6 +11,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -39,12 +40,19 @@ def _load_entity_vectors(state_root: Path) -> dict[str, dict]:
     p = Path(state_root) / ENTITY_VECTOR_FILE
     if not p.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}  # corrupt/truncated cache self-heals: treat as empty and rewrite
 
 
 def _save_entity_vectors(state_root: Path, cache: dict[str, dict]) -> None:
+    # temp file + atomic replace: an interrupted write must never leave a
+    # truncated cache that would fail every later consolidate sweep.
     p = Path(state_root) / ENTITY_VECTOR_FILE
-    p.write_text(json.dumps(cache), encoding="utf-8")
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache), encoding="utf-8")
+    os.replace(tmp, p)
 
 
 def compute_entity_vectors(

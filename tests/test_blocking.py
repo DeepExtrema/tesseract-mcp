@@ -177,3 +177,13 @@ def test_slice_is_churn_robust_no_double_cover():
     checked2 = {e["path"]: blocking.identity_hash(e) for e in ents2}
     slice2, _, _ = blocking.select_slice(ents2, checked2, "a", 1, backstop_due=True)
     assert [e["path"] for e in slice2] == ["b"]  # first path > "a"
+
+
+def test_corrupt_entity_vectors_cache_self_heals(tmp_path):
+    (tmp_path / blocking.ENTITY_VECTOR_FILE).write_text("{ truncated",
+                                                        encoding="utf-8")
+    emb = FakeEmbedder()
+    got = blocking.compute_entity_vectors(_ents(), tmp_path, emb)
+    assert set(got) == {"Claude/Graph/Organizations/Acme",
+                        "Claude/Graph/Organizations/Acme Corp"}
+    assert emb.calls  # corrupt cache treated as empty -> re-embedded
