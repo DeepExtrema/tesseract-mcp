@@ -126,3 +126,54 @@ def test_batch_never_splits_a_cluster():
     batches = blocking.batch_clusters(clusters, max_entities_per_call=8)
     # each batch holds whole clusters; 6+6=12>8 -> one cluster each
     assert [[len(c) for c in b] for b in batches] == [[6], [6]]
+
+
+def _e(path, summary="s"):
+    return {"name": path, "type": "topic", "aliases": [], "summary": summary,
+            "path": path}
+
+
+def test_slice_bounded_even_when_all_unchecked():
+    ents = [_e(f"p{i:03d}") for i in range(500)]
+    slice_, _, used = blocking.select_slice(ents, {}, None, 200, backstop_due=True)
+    assert len(slice_) == 200 and used is False  # unchecked fills the whole budget
+
+
+def test_slice_prioritizes_unchecked_over_backstop():
+    ents = [_e("a"), _e("b"), _e("c")]
+    checked = {e["path"]: blocking.identity_hash(e) for e in ents}
+    checked["b"] = "STALE"  # b is unchecked/changed
+    slice_, _, _ = blocking.select_slice(ents, checked, None, 1, backstop_due=True)
+    assert [e["path"] for e in slice_] == ["b"]
+
+
+def test_backstop_cursor_resumes_by_path_and_wraps():
+    ents = [_e("a"), _e("b"), _e("c"), _e("d")]
+    checked = {e["path"]: blocking.identity_hash(e) for e in ents}  # all checked
+    slice_, cursor, used = blocking.select_slice(
+        ents, checked, "b", 2, backstop_due=True)
+    assert [e["path"] for e in slice_] == ["c", "d"] and cursor == "d" and used
+    # next call wraps past the end back to the start
+    slice2, cursor2, _ = blocking.select_slice(
+        ents, checked, "d", 2, backstop_due=True)
+    assert [e["path"] for e in slice2] == ["a", "b"] and cursor2 == "b"
+
+
+def test_backstop_skipped_when_not_due():
+    ents = [_e("a"), _e("b")]
+    checked = {e["path"]: blocking.identity_hash(e) for e in ents}
+    slice_, cursor, used = blocking.select_slice(
+        ents, checked, "a", 5, backstop_due=False)
+    assert slice_ == [] and cursor == "a" and used is False
+
+
+def test_slice_is_churn_robust_no_double_cover():
+    ents = [_e(p) for p in ["a", "c", "e"]]
+    checked = {e["path"]: blocking.identity_hash(e) for e in ents}
+    _, cursor, _ = blocking.select_slice(ents, checked, None, 1, backstop_due=True)
+    assert cursor == "a"
+    # 'b' is inserted before the next sweep; resume must land on 'c', not skip it
+    ents2 = [_e(p) for p in ["a", "b", "c", "e"]]
+    checked2 = {e["path"]: blocking.identity_hash(e) for e in ents2}
+    slice2, _, _ = blocking.select_slice(ents2, checked2, "a", 1, backstop_due=True)
+    assert [e["path"] for e in slice2] == ["b"]  # first path > "a"

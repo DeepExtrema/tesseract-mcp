@@ -169,3 +169,38 @@ def batch_clusters(
     if current:
         batches.append(current)
     return batches
+
+
+def _resume_after(by_path: list[dict], cursor: str | None) -> list[dict]:
+    if cursor is None:
+        return list(by_path)
+    paths = [e["path"] for e in by_path]
+    idx = bisect.bisect_right(paths, cursor)  # first index with path > cursor
+    return by_path[idx:] + by_path[:idx]
+
+
+def select_slice(
+    entities: list[dict],
+    checked_hash: dict[str, str],
+    cursor: str | None,
+    slice_size: int,
+    *,
+    backstop_due: bool,
+) -> tuple[list[dict], str | None, bool]:
+    by_path = sorted(entities, key=lambda e: e["path"])
+    slice_ = [e for e in by_path if checked_hash.get(e["path"]) != identity_hash(e)]
+    slice_ = slice_[:slice_size]
+    new_cursor = cursor
+    used_backstop = False
+    if backstop_due and len(slice_) < slice_size:
+        chosen = {e["path"] for e in slice_}
+        for e in _resume_after(by_path, cursor):
+            if len(slice_) >= slice_size:
+                break
+            if e["path"] in chosen:
+                continue
+            slice_.append(e)
+            chosen.add(e["path"])
+            new_cursor = e["path"]
+            used_backstop = True
+    return slice_, new_cursor, used_backstop
