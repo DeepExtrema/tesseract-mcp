@@ -101,3 +101,54 @@ def _candidate_pairs(
         for _, op in sims[:k]:
             pairs.add(tuple(sorted((s["path"], op))))
     return pairs
+
+
+def _cluster_pairs(pairs: set[tuple[str, str]], *, max_cluster: int) -> list[list[str]]:
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in pairs:
+        union(a, b)
+
+    groups: dict[str, list[str]] = defaultdict(list)
+    for node in parent:
+        groups[find(node)].append(node)
+
+    clusters: list[list[str]] = []
+    for members in groups.values():
+        members.sort()
+        for i in range(0, len(members), max_cluster):
+            clusters.append(members[i:i + max_cluster])
+    return clusters
+
+
+def candidate_clusters(
+    slice_entities: list[dict],
+    all_entities: list[dict],
+    vectors: dict[str, list[float]],
+    *,
+    k: int = K_NEIGHBORS,
+    threshold: float = SIM_THRESHOLD,
+    max_cluster: int = MAX_CLUSTER,
+) -> list[list[dict]]:
+    pairs = _candidate_pairs(
+        slice_entities, all_entities, vectors, k=k, threshold=threshold
+    )
+    path_clusters = _cluster_pairs(pairs, max_cluster=max_cluster)
+    by_path = {e["path"]: e for e in all_entities}
+    return [
+        [by_path[p] for p in members]
+        for members in path_clusters
+        if len(members) >= 2
+    ]

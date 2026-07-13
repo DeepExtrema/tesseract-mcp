@@ -84,3 +84,27 @@ def test_candidate_pairs_top_k_limit():
     vectors = {f"p{i}": [1.0, i * 0.001] for i in range(6)}  # all near-parallel
     pairs = blocking._candidate_pairs([ents[0]], ents, vectors, k=2, threshold=0.85)
     assert len(pairs) == 2  # only p0's 2 nearest, not all 5
+
+
+def test_cluster_pairs_unions_overlapping():
+    # a-b and b-c overlap on b -> one cluster {a,b,c}
+    clusters = blocking._cluster_pairs({("a", "b"), ("b", "c")}, max_cluster=10)
+    assert clusters == [["a", "b", "c"]]
+
+
+def test_cluster_pairs_splits_oversize():
+    members = [f"n{i:02d}" for i in range(11)]
+    pairs = {("n00", m) for m in members[1:]}  # star -> one component of 11
+    clusters = blocking._cluster_pairs(pairs, max_cluster=10)
+    assert sorted(len(c) for c in clusters) == [1, 10]
+
+
+def test_candidate_clusters_maps_to_entities_and_drops_singletons():
+    ents = [
+        {"path": "a", "type": "topic"}, {"path": "b", "type": "topic"},
+        {"path": "lonely", "type": "topic"},
+    ]
+    vectors = {"a": [1.0, 0.0], "b": [1.0, 0.01], "lonely": [0.0, 1.0]}
+    clusters = blocking.candidate_clusters(ents, ents, vectors)
+    assert len(clusters) == 1
+    assert {e["path"] for e in clusters[0]} == {"a", "b"}
