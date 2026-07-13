@@ -78,16 +78,8 @@ def gather_entities(vault: Vault) -> list[dict]:
     return out
 
 
-def propose_merges(backend, entities: list[dict]) -> list[dict]:
-    if not entities:
-        return []
-    listing = "\n".join(
-        f"{e['type']} | {e['name']} | {', '.join(e['aliases']) or '-'}"
-        for e in entities
-    )
-    raw = backend.complete_json(PROMPT.format(listing=listing))
-    known = {(e["type"], e["name"].casefold()) for e in entities}
-    merges = []
+def _validate_merges(raw: dict, known: set[tuple[str, str]]) -> list[dict]:
+    out = []
     for m in raw.get("merges") or []:
         etype = str(m.get("type") or "").lower()
         canonical = str(m.get("canonical") or "").strip()
@@ -99,7 +91,47 @@ def propose_merges(backend, entities: list[dict]) -> list[dict]:
             continue
         if any((etype, d.casefold()) not in known for d in dups):
             continue
-        merges.append({"type": etype, "canonical": canonical, "duplicates": dups})
+        out.append({"type": etype, "canonical": canonical, "duplicates": dups})
+    return out
+
+
+def _listing(entities: list[dict]) -> str:
+    return "\n".join(
+        f"{e['type']} | {e['name']} | {', '.join(e['aliases']) or '-'}"
+        for e in entities
+    )
+
+
+def adjudicate_batches(
+    backend, batches: list[list[list[dict]]], all_entities: list[dict]
+) -> tuple[list[dict], int]:
+    """Run one LLM call per batch, isolating failures. A batch is a list of
+    clusters; a cluster is a list of entity dicts. Returns (merges, skipped)."""
+    known = {(e["type"], e["name"].casefold()) for e in all_entities}
+    merges: list[dict] = []
+    seen: set[tuple] = set()
+    skipped = 0
+    for batch in batches:
+        entities = [e for cluster in batch for e in cluster]
+        try:
+            raw = backend.complete_json(PROMPT.format(listing=_listing(entities)))
+        except Exception:  # noqa: BLE001 — one bad batch must not fail the step
+            skipped += 1
+            continue
+        for m in _validate_merges(raw, known):
+            key = (m["type"], m["canonical"].casefold(),
+                   tuple(sorted(d.casefold() for d in m["duplicates"])))
+            if key in seen:
+                continue
+            seen.add(key)
+            merges.append(m)
+    return merges, skipped
+
+
+def propose_merges(backend, entities: list[dict]) -> list[dict]:
+    if not entities:
+        return []
+    merges, _ = adjudicate_batches(backend, [[entities]], entities)
     return merges
 
 

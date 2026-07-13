@@ -1,7 +1,7 @@
 import yaml
 
 from tesseract_mcp import cache, consolidate
-from tesseract_mcp.extractor import Extraction
+from tesseract_mcp.extractor import Extraction, ExtractorError
 from tesseract_mcp.graphstore import GraphStore, entity_rel_path
 from tesseract_mcp.search import parse_frontmatter
 
@@ -17,6 +17,25 @@ class FakeBackend:
     def complete_json(self, prompt):
         self.prompts.append(prompt)
         return self.reply
+
+
+class FlakyBackend:
+    """Raises on any prompt mentioning `boom_name`; else returns `reply`."""
+
+    def __init__(self, reply, boom_name):
+        self.reply = reply
+        self.boom_name = boom_name
+        self.calls = 0
+
+    def complete_json(self, prompt):
+        self.calls += 1
+        if self.boom_name in prompt:
+            raise ExtractorError("claude timed out after 120s")
+        return self.reply
+
+
+def _ent(name, etype="organization"):
+    return {"name": name, "type": etype, "aliases": [], "summary": name}
 
 
 def seed(vault):
@@ -114,3 +133,27 @@ def test_entity_summary_no_frontmatter_with_horizontal_rule():
 def test_entity_summary_empty_when_no_body():
     text = "---\nentity: topic\n---\n\n# Foo\n\n## Mentions\n\n## Relations\n"
     assert consolidate._entity_summary(text) == ""
+
+
+def test_adjudicate_isolates_a_failing_batch():
+    good = [_ent("Acme"), _ent("Acme Corp")]
+    bad = [_ent("Zeta"), _ent("Zeta Inc")]
+    all_ents = good + bad
+    batches = [[good], [bad]]  # one cluster per batch
+    reply = {"merges": [{"type": "organization", "canonical": "Acme",
+                         "duplicates": ["Acme Corp"]}]}
+    backend = FlakyBackend(reply, boom_name="Zeta")
+    merges, skipped = consolidate.adjudicate_batches(backend, batches, all_ents)
+    assert skipped == 1
+    assert merges == [{"type": "organization", "canonical": "Acme",
+                       "duplicates": ["Acme Corp"]}]
+
+
+def test_adjudicate_dedupes_merges_across_batches():
+    ents = [_ent("Acme"), _ent("Acme Corp")]
+    reply = {"merges": [{"type": "organization", "canonical": "Acme",
+                         "duplicates": ["Acme Corp"]}]}
+    batches = [[ents], [ents]]  # same reply twice
+    merges, skipped = consolidate.adjudicate_batches(
+        FakeBackend(reply), batches, ents)
+    assert skipped == 0 and len(merges) == 1
