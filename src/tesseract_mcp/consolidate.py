@@ -19,7 +19,7 @@ from .graphstore import (
     entity_rel_path,
 )
 from .indexer import db_path
-from .search import parse_frontmatter
+from .search import parse_frontmatter, body_text
 from .vault import Vault
 
 PROMPT = """You are deduplicating entities in a personal knowledge graph.
@@ -48,8 +48,7 @@ def _section_lines(text: str, header: str) -> list[str]:
 def _entity_summary(text: str) -> str:
     """Body text between the `# name` H1 and `## Mentions` — the note
     template writes the entity summary there (not frontmatter)."""
-    end = text.find("\n---", 3)
-    body = text[end + 4:] if end != -1 else text
+    body = body_text(text)
     cut = body.find(MENTIONS_HEADER)
     if cut != -1:
         body = body[:cut]

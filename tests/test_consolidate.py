@@ -102,3 +102,15 @@ def test_gather_entities_includes_body_summary(vault):
     got = {e["name"]: e for e in consolidate.gather_entities(vault)}
     assert got["Oracle VM"]["summary"] == "Cloud VM."
     assert got["Oracle VM deploy"]["summary"] == "Deploying it."
+
+
+def test_entity_summary_no_frontmatter_with_horizontal_rule():
+    text = "# Foo\n\nLine one.\n\n---\n\nLine two.\n\n## Mentions\n\n## Relations\n"
+    # no leading frontmatter: the --- is a horizontal rule, NOT a frontmatter
+    # terminator, so the whole body before Mentions is the summary
+    assert consolidate._entity_summary(text) == "Line one.\n\n---\n\nLine two."
+
+
+def test_entity_summary_empty_when_no_body():
+    text = "---\nentity: topic\n---\n\n# Foo\n\n## Mentions\n\n## Relations\n"
+    assert consolidate._entity_summary(text) == ""
