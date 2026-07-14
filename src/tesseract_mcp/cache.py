@@ -47,7 +47,7 @@ def rebuild(vault: Vault, db_path: Path) -> None:
         for p in sorted(graph_dir.rglob("*.md")):
             text = p.read_text(encoding="utf-8", errors="ignore")
             meta = parse_frontmatter(text)
-            if meta.get("merged_into"):
+            if meta.get("merged_into") or meta.get("retired"):
                 continue
             etype = str(meta.get("entity") or "topic")
             name = p.stem

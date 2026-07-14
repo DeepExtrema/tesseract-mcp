@@ -92,11 +92,21 @@ def test_cluster_pairs_unions_overlapping():
     assert clusters == [["a", "b", "c"]]
 
 
-def test_cluster_pairs_splits_oversize():
+def test_cluster_pairs_splits_oversize_balanced():
     members = [f"n{i:02d}" for i in range(11)]
     pairs = {("n00", m) for m in members[1:]}  # star -> one component of 11
     clusters = blocking._cluster_pairs(pairs, max_cluster=10)
-    assert sorted(len(c) for c in clusters) == [1, 10]
+    assert sorted(len(c) for c in clusters) == [5, 6]
+    assert sorted(x for c in clusters for x in c) == members  # nobody lost
+
+
+def test_oversize_component_strands_no_member():
+    ents = [{"path": f"n{i:02d}", "type": "topic"} for i in range(11)]
+    vectors = {e["path"]: [1.0, 0.0] for e in ents}
+    clusters = blocking.candidate_clusters(ents, ents, vectors,
+                                           k=10, max_cluster=10)
+    covered = {e["path"] for c in clusters for e in c}
+    assert covered == {e["path"] for e in ents}
 
 
 def test_candidate_clusters_maps_to_entities_and_drops_singletons():
@@ -187,3 +197,17 @@ def test_corrupt_entity_vectors_cache_self_heals(tmp_path):
     assert set(got) == {"Claude/Graph/Organizations/Acme",
                         "Claude/Graph/Organizations/Acme Corp"}
     assert emb.calls  # corrupt cache treated as empty -> re-embedded
+
+
+def test_prune_entity_vectors_drops_vanished_paths(tmp_path):
+    blocking.compute_entity_vectors(_ents(), tmp_path, FakeEmbedder())
+    live = {"Claude/Graph/Organizations/Acme"}  # Acme Corp vanished
+    assert blocking.prune_entity_vectors(tmp_path, live) == 1
+    cache = blocking._load_entity_vectors(tmp_path)
+    assert set(cache) == live
+
+
+def test_prune_entity_vectors_noop_when_all_live(tmp_path):
+    blocking.compute_entity_vectors(_ents(), tmp_path, FakeEmbedder())
+    live = {e["path"] for e in _ents()}
+    assert blocking.prune_entity_vectors(tmp_path, live) == 0

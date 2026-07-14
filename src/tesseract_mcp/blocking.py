@@ -79,6 +79,18 @@ def compute_entity_vectors(
     return result
 
 
+def prune_entity_vectors(state_root: Path, live_paths: set[str]) -> int:
+    """Drop cached identity vectors for entities that no longer exist
+    (deleted, merged, or retired). Returns the number of keys dropped."""
+    cache = _load_entity_vectors(state_root)
+    stale = [k for k in cache if k not in live_paths]
+    for k in stale:
+        del cache[k]
+    if stale:
+        _save_entity_vectors(state_root, cache)
+    return len(stale)
+
+
 def _candidate_pairs(
     slice_entities: list[dict],
     all_entities: list[dict],
@@ -136,8 +148,18 @@ def _cluster_pairs(pairs: set[tuple[str, str]], *, max_cluster: int) -> list[lis
     clusters: list[list[str]] = []
     for members in groups.values():
         members.sort()
-        for i in range(0, len(members), max_cluster):
-            clusters.append(members[i:i + max_cluster])
+        if len(members) <= max_cluster:
+            clusters.append(members)
+            continue
+        # balanced split: chunk sizes differ by at most one, so no real
+        # component can shed a singleton for candidate_clusters to drop
+        k = -(-len(members) // max_cluster)  # ceil: number of chunks
+        base, extra = divmod(len(members), k)
+        start = 0
+        for i in range(k):
+            size = base + (1 if i < extra else 0)
+            clusters.append(members[start:start + size])
+            start += size
     return clusters
 
 
