@@ -55,10 +55,11 @@ def load_manifest(vault_root: str | Path | None = None) -> dict:
         manifest = json.loads(p.read_text(encoding="utf-8"))
     else:
         manifest = {"hashes": {}, "failures": {}}
-    # A hand-repaired manifest may drop a top-level key; callers index both
-    # directly (run(): manifest["failures"].clear/.get). Normalize on load.
-    manifest.setdefault("hashes", {})
-    manifest.setdefault("failures", {})
+    # A hand-repaired manifest may drop a top-level key or null it (JSON null
+    # is a *present* key holding None, so setdefault misses it); callers index
+    # both directly (run(): manifest["failures"].clear/.get). Normalize on load.
+    manifest["hashes"] = manifest.get("hashes") or {}
+    manifest["failures"] = manifest.get("failures") or {}
     for rel, val in list(manifest.get("failures", {}).items()):
         if isinstance(val, str):
             manifest["failures"][rel] = {"error": val, "attempts": 1}
