@@ -103,7 +103,8 @@ def test_cluster_pairs_splits_oversize_balanced():
 def test_oversize_component_strands_no_member():
     ents = [{"path": f"n{i:02d}", "type": "topic"} for i in range(11)]
     vectors = {e["path"]: [1.0, 0.0] for e in ents}
-    clusters = blocking.candidate_clusters(ents, ents, vectors, k=10)
+    clusters = blocking.candidate_clusters(ents, ents, vectors,
+                                           k=10, max_cluster=10)
     covered = {e["path"] for c in clusters for e in c}
     assert covered == {e["path"] for e in ents}
 
