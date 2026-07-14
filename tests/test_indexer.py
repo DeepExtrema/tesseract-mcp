@@ -81,6 +81,19 @@ def test_load_manifest_normalizes_missing_keys(vault):
     assert counts["failed"] == 0
 
 
+def test_load_manifest_normalizes_null_keys(vault):
+    """JSON null round-trips to a *present* key holding None, which sails
+    past setdefault-style checks; load must coerce explicit nulls too."""
+    indexer._manifest_path(vault.root).write_text(
+        '{"hashes": null, "failures": null}', encoding="utf-8"
+    )
+    loaded = indexer.load_manifest(vault.root)
+    assert loaded["hashes"] == {}
+    assert loaded["failures"] == {}
+    counts = indexer.run(vault, FakeExtractor(), retry_failures=True)
+    assert counts["failed"] == 0
+
+
 def test_run_processes_all_then_nothing(vault):
     fx = FakeExtractor({"Daily.md": Extraction([ACME], [])})
     counts = indexer.run(vault, fx)
