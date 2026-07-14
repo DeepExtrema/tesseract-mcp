@@ -66,7 +66,7 @@ def gather_entities(vault: Vault) -> list[dict]:
     for p in sorted(graph_dir.rglob("*.md")):
         text = p.read_text(encoding="utf-8", errors="ignore")
         meta = parse_frontmatter(text)
-        if meta.get("merged_into"):
+        if meta.get("merged_into") or meta.get("retired"):
             continue
         aliases = meta.get("aliases") or []
         if not isinstance(aliases, list):
@@ -142,7 +142,8 @@ def _resolve_dup_note(vault: Vault, etype: str, name: str) -> str | None:
     rel = entity_rel_path(etype, name)
     path = vault.resolve(rel)
     if path.exists():
-        if parse_frontmatter(path.read_text(encoding="utf-8")).get("merged_into"):
+        meta = parse_frontmatter(path.read_text(encoding="utf-8"))
+        if meta.get("merged_into") or meta.get("retired"):
             return None
         return rel
     folder = vault.resolve(f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}")
@@ -152,9 +153,8 @@ def _resolve_dup_note(vault: Vault, etype: str, name: str) -> str | None:
     for p in sorted(folder.glob("*.md")):
         if p.stem.casefold() != needle:
             continue
-        if parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore")).get(
-            "merged_into"
-        ):
+        meta = parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore"))
+        if meta.get("merged_into") or meta.get("retired"):
             return None
         return f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
     return None

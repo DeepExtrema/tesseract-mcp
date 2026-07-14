@@ -171,3 +171,16 @@ def test_adjudicate_dedupes_merges_across_batches():
     merges, skipped = consolidate.adjudicate_batches(
         FakeBackend(reply), batches, ents)
     assert skipped == 0 and len(merges) == 1
+
+
+def test_resolve_dup_note_skips_retired(vault):
+    seed(vault)
+    rel = entity_rel_path("organization", "Oracle VM deploy")
+    text = vault.read(rel)
+    meta = parse_frontmatter(text)
+    meta["retired"] = "2026-07-13 12:00"
+    end = text.find("\n---", 3)
+    fm = "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---"
+    vault.write(rel, fm + text[end + 4:], overwrite=True)
+    assert consolidate._resolve_dup_note(
+        vault, "organization", "Oracle VM deploy") is None

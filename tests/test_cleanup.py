@@ -77,3 +77,36 @@ def test_retract_deleted_tolerates_hand_deleted_entity_note(vault):
     assert result == {"retracted_notes": 1, "removed_mentions": 0,
                       "remaining": 0}
     assert "Projects/Doomed.md" not in indexer.load_manifest(vault.root)["hashes"]
+
+
+def _retire(vault, rel):
+    cleanup.retire_note(vault, rel, NOW,
+                        reason="orphaned — no mentions or relations")
+
+
+def test_retire_note_writes_tombstone_keeping_aliases_and_summary(vault):
+    GraphStore(vault).upsert_entity(
+        {"name": "Acme", "type": "organization",
+         "aliases": ["ACME Inc"], "summary": "Maker of anvils."})
+    rel = "Claude/Graph/Organizations/Acme.md"
+    _retire(vault, rel)
+    text = vault.read(rel)
+    meta = parse_frontmatter(text)
+    assert meta["retired"] == "2026-07-13 12:00"
+    assert meta["aliases"] == ["ACME Inc"]
+    assert "Maker of anvils." in text and "Retired:" in text
+
+
+def test_gather_entities_skips_retired(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Acme"))
+    store.upsert_entity(_ent("Zeta"))
+    _retire(vault, "Claude/Graph/Organizations/Acme.md")
+    assert {e["name"] for e in consolidate.gather_entities(vault)} == {"Zeta"}
+
+
+def test_cache_rebuild_skips_retired(vault):
+    GraphStore(vault).upsert_entity(_ent("Acme"))
+    _retire(vault, "Claude/Graph/Organizations/Acme.md")
+    cache.rebuild(vault, indexer.db_path(vault.root))
+    assert cache.find_entity(indexer.db_path(vault.root), "Acme") == []

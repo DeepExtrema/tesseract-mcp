@@ -82,3 +82,19 @@ def retract_deleted(vault: Vault, limit: int = MAX_RETRACTIONS_PER_SWEEP) -> dic
         indexer.save_manifest(manifest, vault.root)
     return {"retracted_notes": len(todo), "removed_mentions": removed,
             "remaining": len(deleted) - len(todo)}
+
+
+def retire_note(vault: Vault, rel: str, now: datetime, reason: str) -> None:
+    """Replace an entity note with a retired tombstone. Aliases stay in the
+    frontmatter and the summary stays in the body for audit/revival."""
+    text = vault.read(rel)
+    meta = parse_frontmatter(text)
+    meta["retired"] = now.strftime("%Y-%m-%d %H:%M")
+    summary = _entity_summary(text)
+    stem = rel.rsplit("/", 1)[-1][:-3]
+    body = (f"# {stem}\n\n"
+            + (f"{summary}\n\n" if summary else "")
+            + f"Retired: {reason}.\n")
+    fm = "---\n" + yaml.safe_dump(meta, sort_keys=False,
+                                  default_flow_style=None) + "---\n\n"
+    vault.write(rel, fm + body, overwrite=True)
