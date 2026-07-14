@@ -241,3 +241,62 @@ def test_flatten_stubs_leaves_live_targets_alone(vault):
     _stub(vault, "Organizations", "Old", "Claude/Graph/Organizations/Canonical")
     assert cleanup.flatten_stubs(vault, NOW) == {
         "flattened": 0, "retired_stubs": 0}
+
+
+def test_find_orphans_flags_unsupported_entity_only(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Lonely"))                    # nothing supports it
+    store.apply("A.md", Extraction([_ent("Mentioned")], []))
+    store.apply("B.md", Extraction(
+        [_ent("Source")],
+        [{"from": "Source", "from_type": "organization", "rel": "uses",
+          "to": "Endpoint", "to_type": "organization", "evidence": ""}]))
+    orphans = cleanup.find_orphans(vault)
+    assert [o["path"] for o in orphans] == \
+        ["Claude/Graph/Organizations/Lonely"]
+    # Mentioned has a mention; Source has a mention + outbound relation;
+    # Endpoint is a relation-only entity supported by its inbound edge.
+
+
+def test_find_orphans_skips_stubs_and_retired(vault):
+    GraphStore(vault).upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Dup", "Claude/Graph/Organizations/Canonical")
+    GraphStore(vault).upsert_entity(_ent("Tomb"))
+    _retire(vault, "Claude/Graph/Organizations/Tomb.md")
+    paths = {o["path"] for o in cleanup.find_orphans(vault)}
+    assert "Claude/Graph/Organizations/Dup" not in paths
+    assert "Claude/Graph/Organizations/Tomb" not in paths
+
+
+def test_update_retirement_proposals_self_heals_and_caps(vault):
+    block = {"pending_retirements": [
+        {"path": "gone-now-supported", "name": "X", "type": "topic",
+         "reason": "orphaned: no mentions or relations"}]}
+    orphans = [{"path": f"o{i}", "name": f"o{i}", "type": "topic",
+                "reason": "orphaned: no mentions or relations"}
+               for i in range(3)]
+    pending = cleanup.update_retirement_proposals(block, orphans, limit=2)
+    assert [p["path"] for p in pending] == ["o0", "o1"]  # healed + capped
+    assert block["pending_retirements"] == pending
+
+
+def test_apply_retirements_tombstones_and_rebuilds(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Lonely"))
+    store.apply("A.md", Extraction([_ent("Kept")], []))
+    result = cleanup.apply_retirements(vault, now=NOW)
+    assert result == {"retired": ["Claude/Graph/Organizations/Lonely"]}
+    meta = parse_frontmatter(vault.read("Claude/Graph/Organizations/Lonely.md"))
+    assert meta["retired"] == "2026-07-13 12:00"
+    assert cache.find_entity(indexer.db_path(vault.root), "Lonely") == []
+
+
+def test_apply_retirements_paths_filter(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("LonelyA"))
+    store.upsert_entity(_ent("LonelyB"))
+    result = cleanup.apply_retirements(
+        vault, paths=["Claude/Graph/Organizations/LonelyA"], now=NOW)
+    assert result == {"retired": ["Claude/Graph/Organizations/LonelyA"]}
+    meta = parse_frontmatter(vault.read("Claude/Graph/Organizations/LonelyB.md"))
+    assert "retired" not in meta

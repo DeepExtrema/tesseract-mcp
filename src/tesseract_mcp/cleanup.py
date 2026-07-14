@@ -198,3 +198,95 @@ def flatten_stubs(vault: Vault, now: datetime) -> dict:
             retire_note(vault, rel, now, reason="merge redirect target gone")
             retired += 1
     return {"flattened": flattened, "retired_stubs": retired}
+
+
+def find_orphans(vault: Vault) -> list[dict]:
+    """Live entities with no mentions, no outbound and no inbound relations.
+    One markdown pass — the notes are the source of truth, not the DB.
+    Relation-only entities (endpoints created by graphstore.apply without a
+    mention) are supported by their inbound edge and are NOT orphans."""
+    graph_dir = vault.resolve(GRAPH_ROOT)
+    if not graph_dir.is_dir():
+        return []
+    candidates: list[dict] = []
+    inbound: set[str] = set()
+    for p in sorted(graph_dir.rglob("*.md")):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        meta = parse_frontmatter(text)
+        rel_lines = _section_lines(text, RELATIONS_HEADER)
+        for line in rel_lines:
+            m = _RELATION.match(line.strip())
+            if m:
+                inbound.add(m.group(2).strip())
+        if meta.get("merged_into") or meta.get("retired"):
+            continue
+        candidates.append(
+            {"path": "/".join(p.relative_to(vault.root).parts)[:-3],
+             "name": p.stem,
+             "type": str(meta.get("entity") or "topic"),
+             "supported": bool(
+                 _section_lines(text, MENTIONS_HEADER) or rel_lines)})
+    return [
+        {"path": c["path"], "name": c["name"], "type": c["type"],
+         "reason": "orphaned: no mentions or relations"}
+        for c in candidates
+        if not c["supported"] and c["path"] not in inbound
+    ]
+
+
+def update_retirement_proposals(
+    block: dict, orphans: list[dict], limit: int = MAX_PENDING_RETIREMENTS
+) -> list[dict]:
+    """Self-healing pending list: drop entries no longer orphaned, add new
+    orphans, cap the total. Mutates block["pending_retirements"]."""
+    current = {o["path"] for o in orphans}
+    pending = [p for p in (block.get("pending_retirements") or [])
+               if p["path"] in current]
+    have = {p["path"] for p in pending}
+    for o in orphans:
+        if len(pending) >= limit:
+            break
+        if o["path"] not in have:
+            pending.append(o)
+    block["pending_retirements"] = pending
+    return pending
+
+
+def apply_retirements(
+    vault: Vault, paths: list[str] | None = None, now: datetime | None = None
+) -> dict:
+    """Retire CURRENTLY-orphaned entities (orphanhood recomputed — stale
+    proposals are never trusted), optionally filtered to paths."""
+    now = now or datetime.now()
+    orphans = find_orphans(vault)
+    if paths is not None:
+        wanted = set(paths)
+        orphans = [o for o in orphans if o["path"] in wanted]
+    for o in orphans:
+        retire_note(vault, o["path"] + ".md", now,
+                    reason="orphaned — no mentions or relations")
+    if orphans:
+        cache.rebuild(vault, indexer.db_path(vault.root))
+    return {"retired": sorted(o["path"] for o in orphans)}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Graph deletion & orphaned-entity cleanup.")
+    parser.add_argument("vault", help="Path to the Obsidian vault root")
+    parser.add_argument("--apply-retirements", action="store_true",
+                        help="retire currently-orphaned entities "
+                             "(default: report only)")
+    parser.add_argument("--paths", nargs="*", default=None,
+                        help="restrict retirement to these entity paths")
+    args = parser.parse_args()
+    vault = Vault(args.vault)
+    if args.apply_retirements:
+        print(json.dumps(apply_retirements(vault, paths=args.paths), indent=2))
+        return
+    print(json.dumps({"deleted_notes": deleted_notes(vault),
+                      "orphans": find_orphans(vault)}, indent=2))
+
+
+if __name__ == "__main__":
+    main()
