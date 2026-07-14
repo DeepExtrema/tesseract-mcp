@@ -270,6 +270,18 @@ def apply_retirements(
     return {"retired": sorted(o["path"] for o in orphans)}
 
 
+def prune_checked_hash(con: dict, live_paths: set[str]) -> int:
+    """Drop consolidation checked_hash entries for vanished entities.
+    Mutates con in place; the caller owns persisting the state."""
+    checked = con.get("checked_hash") or {}
+    stale = [k for k in checked if k not in live_paths]
+    for k in stale:
+        del checked[k]
+    if stale:
+        con["checked_hash"] = checked
+    return len(stale)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Graph deletion & orphaned-entity cleanup.")

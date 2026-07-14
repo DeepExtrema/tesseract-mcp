@@ -79,6 +79,18 @@ def compute_entity_vectors(
     return result
 
 
+def prune_entity_vectors(state_root: Path, live_paths: set[str]) -> int:
+    """Drop cached identity vectors for entities that no longer exist
+    (deleted, merged, or retired). Returns the number of keys dropped."""
+    cache = _load_entity_vectors(state_root)
+    stale = [k for k in cache if k not in live_paths]
+    for k in stale:
+        del cache[k]
+    if stale:
+        _save_entity_vectors(state_root, cache)
+    return len(stale)
+
+
 def _candidate_pairs(
     slice_entities: list[dict],
     all_entities: list[dict],

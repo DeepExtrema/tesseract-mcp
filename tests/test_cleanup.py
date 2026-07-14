@@ -300,3 +300,13 @@ def test_apply_retirements_paths_filter(vault):
     assert result == {"retired": ["Claude/Graph/Organizations/LonelyA"]}
     meta = parse_frontmatter(vault.read("Claude/Graph/Organizations/LonelyB.md"))
     assert "retired" not in meta
+
+
+def test_prune_checked_hash_drops_vanished_paths():
+    con = {"checked_hash": {"live": "h1", "gone": "h2"}}
+    assert cleanup.prune_checked_hash(con, {"live"}) == 1
+    assert con["checked_hash"] == {"live": "h1"}
+
+
+def test_prune_checked_hash_handles_empty_block():
+    assert cleanup.prune_checked_hash({}, {"anything"}) == 0

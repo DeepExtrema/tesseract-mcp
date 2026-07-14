@@ -187,3 +187,17 @@ def test_corrupt_entity_vectors_cache_self_heals(tmp_path):
     assert set(got) == {"Claude/Graph/Organizations/Acme",
                         "Claude/Graph/Organizations/Acme Corp"}
     assert emb.calls  # corrupt cache treated as empty -> re-embedded
+
+
+def test_prune_entity_vectors_drops_vanished_paths(tmp_path):
+    blocking.compute_entity_vectors(_ents(), tmp_path, FakeEmbedder())
+    live = {"Claude/Graph/Organizations/Acme"}  # Acme Corp vanished
+    assert blocking.prune_entity_vectors(tmp_path, live) == 1
+    cache = blocking._load_entity_vectors(tmp_path)
+    assert set(cache) == live
+
+
+def test_prune_entity_vectors_noop_when_all_live(tmp_path):
+    blocking.compute_entity_vectors(_ents(), tmp_path, FakeEmbedder())
+    live = {e["path"] for e in _ents()}
+    assert blocking.prune_entity_vectors(tmp_path, live) == 0
