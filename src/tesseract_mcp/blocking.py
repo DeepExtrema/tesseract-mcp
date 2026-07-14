@@ -148,8 +148,18 @@ def _cluster_pairs(pairs: set[tuple[str, str]], *, max_cluster: int) -> list[lis
     clusters: list[list[str]] = []
     for members in groups.values():
         members.sort()
-        for i in range(0, len(members), max_cluster):
-            clusters.append(members[i:i + max_cluster])
+        if len(members) <= max_cluster:
+            clusters.append(members)
+            continue
+        # balanced split: chunk sizes differ by at most one, so no real
+        # component can shed a singleton for candidate_clusters to drop
+        k = -(-len(members) // max_cluster)  # ceil: number of chunks
+        base, extra = divmod(len(members), k)
+        start = 0
+        for i in range(k):
+            size = base + (1 if i < extra else 0)
+            clusters.append(members[start:start + size])
+            start += size
     return clusters
 
 
