@@ -1,5 +1,8 @@
+import yaml
+
 from tesseract_mcp.extractor import Extraction
 from tesseract_mcp.graphstore import GRAPH_ROOT, GraphStore, entity_rel_path
+from tesseract_mcp.search import parse_frontmatter
 
 ACME = {"name": "Acme Corp", "type": "organization", "aliases": ["ACME"], "summary": "A company."}
 CHAIN = {"name": "Supply Chain", "type": "domain", "aliases": [], "summary": "Logistics."}
@@ -132,3 +135,50 @@ def test_remove_mention(vault):
     assert "[[A/Report|" not in body
     assert "[[B/Report|" in body                  # other mention intact
     assert store.remove_mention(rel, "A/Report.md") is False  # idempotent
+
+
+def _org(name, aliases=(), summary="S."):
+    return {"name": name, "type": "organization",
+            "aliases": list(aliases), "summary": summary}
+
+
+def _write_stub(vault, name, target_path):
+    vault.write(f"Claude/Graph/Organizations/{name}.md",
+                ("---\nentity: organization\n"
+                 f"merged_into: {target_path}\n---\n\n"
+                 f"# {name}\n\nMerged into [[X]].\n"),
+                overwrite=True)
+
+
+def test_find_entity_note_follows_merge_redirect(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_org("Canonical"))
+    _write_stub(vault, "Dup", "Claude/Graph/Organizations/Canonical")
+    assert store.find_entity_note("organization", "Dup") == \
+        "Claude/Graph/Organizations/Canonical.md"
+
+
+def test_find_entity_note_returns_stub_when_chain_dead_ends(vault):
+    _write_stub(vault, "Dup", "Claude/Graph/Organizations/Ghost")
+    assert GraphStore(vault).find_entity_note("organization", "Dup") == \
+        "Claude/Graph/Organizations/Dup.md"
+
+
+def test_upsert_revives_retired_entity(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_org("Acme", aliases=["ACME Inc"]))
+    rel = "Claude/Graph/Organizations/Acme.md"
+    text = vault.read(rel)
+    meta = parse_frontmatter(text)
+    meta["retired"] = "2026-07-13 12:00"
+    end = text.find("\n---", 3)
+    vault.write(rel, "---\n" + yaml.safe_dump(meta, sort_keys=False) + "---"
+                + text[end + 4:], overwrite=True)
+    got, created = store.upsert_entity_ex(
+        _org("Acme", aliases=["Acme Corp"], summary="Back again."))
+    assert got == rel and created is True
+    revived = vault.read(rel)
+    revived_meta = parse_frontmatter(revived)
+    assert "retired" not in revived_meta
+    assert set(revived_meta["aliases"]) == {"Acme Corp", "ACME Inc"}
+    assert "Back again." in revived and "## Mentions" in revived

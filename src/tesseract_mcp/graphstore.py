@@ -86,14 +86,21 @@ class GraphStore:
             return None
         needle = name.casefold()
         for p in sorted(folder.glob("*.md")):
-            if p.stem.casefold() == needle or safe_filename(name).casefold() == p.stem.casefold():
-                return f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
             meta = parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore"))
             aliases = meta.get("aliases") or []
             if not isinstance(aliases, list):
                 aliases = [aliases]
-            if needle in {str(a).casefold() for a in aliases}:
-                return f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
+            if (p.stem.casefold() != needle
+                    and safe_filename(name).casefold() != p.stem.casefold()
+                    and needle not in {str(a).casefold() for a in aliases}):
+                continue
+            rel = f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
+            if meta.get("merged_into"):
+                # a new mention of a merged name belongs on the canonical,
+                # not the stub; a dead-end chain keeps the stub as-is
+                canonical = resolve_redirect(self.vault, str(meta["merged_into"]))
+                return (canonical + ".md") if canonical else rel
+            return rel
         return None
 
     def upsert_entity(self, ent: dict, now: datetime | None = None) -> str:
@@ -110,6 +117,20 @@ class GraphStore:
         # merge new aliases (and a colliding display name) into frontmatter
         text = self.vault.read(existing)
         meta = parse_frontmatter(text)
+        if meta.get("retired"):
+            # revive: a retired entity that reappears in extraction comes
+            # back as a fresh note, keeping the tombstone's recorded aliases
+            revived = dict(ent)
+            old = meta.get("aliases") or []
+            if not isinstance(old, list):
+                old = [old]
+            known = {str(a).casefold() for a in (ent.get("aliases") or [])}
+            known.add(ent["name"].casefold())
+            revived["aliases"] = list(ent.get("aliases") or []) + [
+                str(a) for a in old if str(a).casefold() not in known]
+            self.vault.write(existing, _note_template(revived, now),
+                             overwrite=True)
+            return existing, True
         # the note's canonical name is its H1; a differing incoming name is a
         # safe_filename collision we must not silently drop — record it as alias
         note_name = existing.rsplit("/", 1)[-1][:-3]
