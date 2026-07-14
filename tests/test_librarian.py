@@ -560,3 +560,71 @@ def test_empty_slice_sweep_still_starts_backstop_clock(vault, vault_dir):
                         embedder=FakeEmbedder(), now=later)
     con = librarian.load_state(vault)["consolidation"]
     assert con["backstop_last_advance"] == later.strftime(librarian.TS_FMT)
+
+
+def test_sweep_cleanup_retracts_deleted_note_and_proposes_orphan(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization",
+                 mentions=["Projects/Doomed"])
+    manifest = indexer.load_manifest(vault.root)
+    manifest["hashes"]["Projects/Doomed.md"] = "digest"
+    indexer.save_manifest(manifest, vault.root)
+    cache.rebuild(vault, indexer.db_path(vault.root))
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(), now=NOW)
+    step = result["steps"]["cleanup"]
+    assert step["retracted_notes"] == 1 and step["removed_mentions"] == 1
+    text = (vault_dir / "Claude" / "Graph" / "Organizations"
+            / "Acme.md").read_text(encoding="utf-8")
+    assert "Doomed" not in text
+    # with its only mention gone, Acme is now proposed for retirement
+    assert step["pending_retirements"] == 1
+    pending = librarian.load_state(vault)["cleanup"]["pending_retirements"]
+    assert pending[0]["path"] == "Claude/Graph/Organizations/Acme"
+
+
+def test_cleanup_dry_run_writes_nothing(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization",
+                 mentions=["Projects/Doomed"])
+    manifest = indexer.load_manifest(vault.root)
+    manifest["hashes"]["Projects/Doomed.md"] = "digest"
+    indexer.save_manifest(manifest, vault.root)
+    cache.rebuild(vault, indexer.db_path(vault.root))
+    result = librarian.run_sweep(vault, consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(), apply=False, now=NOW)
+    step = result["steps"]["cleanup"]
+    assert step["applied"] is False and step["deleted_pending"] == 1
+    text = (vault_dir / "Claude" / "Graph" / "Organizations"
+            / "Acme.md").read_text(encoding="utf-8")
+    assert "Doomed" in text  # nothing was retracted
+
+
+def test_sweep_prunes_stale_consolidation_keys(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    (vault_dir / "Claude" / "Graph" / "Organizations" / "Acme.md").unlink()
+    result = librarian.run_sweep(vault, extractor=FakeExtractor(),
+                                 consolidator=FakeConsolidator(),
+                                 embedder=FakeEmbedder(),
+                                 now=NOW + timedelta(minutes=5))
+    assert result["steps"]["cleanup"]["pruned_cache_keys"] == 2  # vector + hash
+    assert librarian.load_state(vault)["consolidation"]["checked_hash"] == {}
+
+
+def test_summarize_steps_includes_cleanup():
+    steps = {"cleanup": {"applied": True, "deleted_pending": 0, "orphans": 1,
+                         "retracted_notes": 2, "removed_mentions": 3,
+                         "fixed_relations": 1, "removed_relations": 0,
+                         "flattened_stubs": 0, "retired_stubs": 0,
+                         "pruned_cache_keys": 4, "pending_retirements": 1}}
+    out = librarian._summarize_steps(steps)
+    assert out["cleanup"]["retracted_notes"] == 2
+    assert out["cleanup"]["pending_retirements"] == 1
+
+
+def test_health_counts_pending_retirements(vault):
+    state = {"cleanup": {"pending_retirements": [{"path": "x"}]}}
+    health = librarian.run_health(vault, state, None, None, {})
+    assert health["pending_retirements"] == 1

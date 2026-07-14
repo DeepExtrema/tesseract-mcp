@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import blocking
 from . import cache
+from . import cleanup as cleanup_mod
 from . import consolidate as consolidate_mod
 from . import embeddings as embeddings_mod
 from . import extractor as extractor_mod
@@ -152,6 +153,8 @@ def run_health(
         "pending_proposals": lambda: count_pending_proposals(
             state, organize_report, consolidate_result),
         "invalid_sheet_rows": lambda: count_invalid_sheet_rows(vault),
+        "pending_retirements": lambda: len(
+            (state.get("cleanup") or {}).get("pending_retirements", [])),
         "sweep_errors": lambda: dict(errors),
     }
     out: dict = {}
@@ -260,6 +263,45 @@ def _consolidate_step(
             "skipped_batches": skipped}
 
 
+def _cleanup_step(vault: Vault, state: dict, now: datetime, apply: bool) -> dict:
+    """Mechanical graph hygiene (auto-applied) + retirement proposals
+    (propose-only; applied via the cleanup CLI). Runs before consolidate so
+    the slice never spends budget on entities this sweep just unsupported."""
+    if not apply:
+        return {"applied": False,
+                "deleted_pending": len(cleanup_mod.deleted_notes(vault)),
+                "orphans": len(cleanup_mod.find_orphans(vault)),
+                "retracted_notes": 0, "removed_mentions": 0,
+                "fixed_relations": 0, "removed_relations": 0,
+                "flattened_stubs": 0, "retired_stubs": 0,
+                "pruned_cache_keys": 0, "pending_retirements": 0}
+    ret = cleanup_mod.retract_deleted(vault)
+    rel = cleanup_mod.repair_relations(vault)
+    stubs = cleanup_mod.flatten_stubs(vault, now)
+    if (ret["removed_mentions"] or rel["fixed"] or rel["removed"]
+            or stubs["flattened"] or stubs["retired_stubs"]):
+        cache.rebuild(vault, indexer.db_path(vault.root))
+    orphans = cleanup_mod.find_orphans(vault)
+    block = state.get("cleanup") or {}
+    pending = cleanup_mod.update_retirement_proposals(block, orphans)
+    block["last_pass"] = now.strftime(TS_FMT)
+    state["cleanup"] = block
+    live = {e["path"] for e in consolidate_mod.gather_entities(vault)}
+    pruned = blocking.prune_entity_vectors(indexer.state_dir(vault.root), live)
+    pruned += cleanup_mod.prune_checked_hash(
+        state.get("consolidation") or {}, live)
+    return {"applied": True,
+            "deleted_pending": ret["remaining"], "orphans": len(orphans),
+            "retracted_notes": ret["retracted_notes"],
+            "removed_mentions": ret["removed_mentions"],
+            "fixed_relations": rel["fixed"],
+            "removed_relations": rel["removed"],
+            "flattened_stubs": stubs["flattened"],
+            "retired_stubs": stubs["retired_stubs"],
+            "pruned_cache_keys": pruned,
+            "pending_retirements": len(pending)}
+
+
 def _step(result: dict, name: str, fn) -> None:
     try:
         result["steps"][name] = fn()
@@ -281,6 +323,16 @@ def _summarize_steps(steps: dict) -> dict:
         "skipped": len(org["skipped"]),
     }
     out["cache"] = steps.get("cache")
+    cl = steps.get("cleanup")
+    out["cleanup"] = cl if cl is None else {
+        "retracted_notes": cl["retracted_notes"],
+        "fixed_relations": cl["fixed_relations"],
+        "removed_relations": cl["removed_relations"],
+        "flattened_stubs": cl["flattened_stubs"],
+        "retired_stubs": cl["retired_stubs"],
+        "pruned_cache_keys": cl["pruned_cache_keys"],
+        "pending_retirements": cl["pending_retirements"],
+    }
     con = steps.get("consolidate")
     out["consolidate"] = con if con is None else {
         "ran": con["ran"], "reason": con["reason"],
@@ -319,6 +371,18 @@ def format_report(result: dict, now: datetime) -> str:
     else:
         lines.append("- cache: fresh, no rebuild needed\n")
 
+    cl = steps.get("cleanup")
+    if cl is None:
+        lines.append("- cleanup: FAILED\n")
+    elif not cl["applied"]:
+        lines.append(f"- cleanup: {cl['deleted_pending']} deleted notes "
+                     f"pending, {cl['orphans']} orphans (dry-run)\n")
+    else:
+        lines.append(f"- cleanup: retracted {cl['retracted_notes']} notes, "
+                     f"fixed {cl['fixed_relations'] + cl['removed_relations']} "
+                     f"relations, {cl['pending_retirements']} retirement "
+                     f"proposals\n")
+
     con = steps.get("consolidate")
     if con is None:
         lines.append("- consolidate: FAILED\n")
@@ -351,7 +415,8 @@ def format_report(result: dict, now: datetime) -> str:
         f"orphaned_entities {orph_n} {mark(orph_n == 0)} | "
         f"cache_consistency {mark(consistent)} | "
         f"invalid_sheet_rows {invalid_n} {mark(invalid_n == 0)} | "
-        f"pending_proposals {h.get('pending_proposals', 0)}\n")
+        f"pending_proposals {h.get('pending_proposals', 0)} | "
+        f"pending_retirements {h.get('pending_retirements', 0)}\n")
 
     errs = result["errors"]
     if errs:
@@ -402,6 +467,9 @@ def run_sweep(
           lambda: organizer_mod.run_sweep(vault, embedder, apply=apply))
 
     _step(result, "cache", lambda: _ensure_cache(vault, result))
+
+    _step(result, "cleanup",
+          lambda: _cleanup_step(vault, state, now, apply))
 
     _step(result, "consolidate",
           lambda: _consolidate_step(vault, state, consolidator, now, apply, embedder))
