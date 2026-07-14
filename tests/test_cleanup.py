@@ -215,3 +215,29 @@ def test_repair_relations_skips_stub_and_retired_sources(vault):
     assert cleanup.repair_relations(vault) == {"fixed": 0, "removed": 0}
     assert dangling in vault.read("Claude/Graph/Organizations/Stubby.md")
     assert dangling in vault.read("Claude/Graph/Organizations/Tomb.md")
+
+
+def test_flatten_stubs_points_chain_at_final_canonical(vault):
+    GraphStore(vault).upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Mid", "Claude/Graph/Organizations/Canonical")
+    _stub(vault, "Organizations", "Old", "Claude/Graph/Organizations/Mid")
+    result = cleanup.flatten_stubs(vault, NOW)
+    assert result == {"flattened": 1, "retired_stubs": 0}
+    meta = parse_frontmatter(vault.read("Claude/Graph/Organizations/Old.md"))
+    assert meta["merged_into"] == "Claude/Graph/Organizations/Canonical"
+    assert "[[Canonical]]" in vault.read("Claude/Graph/Organizations/Old.md")
+
+
+def test_flatten_stubs_retires_dead_end_stub(vault):
+    _stub(vault, "Organizations", "Old", "Claude/Graph/Organizations/Ghost")
+    result = cleanup.flatten_stubs(vault, NOW)
+    assert result == {"flattened": 0, "retired_stubs": 1}
+    meta = parse_frontmatter(vault.read("Claude/Graph/Organizations/Old.md"))
+    assert meta["retired"] == "2026-07-13 12:00"
+
+
+def test_flatten_stubs_leaves_live_targets_alone(vault):
+    GraphStore(vault).upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Old", "Claude/Graph/Organizations/Canonical")
+    assert cleanup.flatten_stubs(vault, NOW) == {
+        "flattened": 0, "retired_stubs": 0}

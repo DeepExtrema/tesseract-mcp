@@ -166,3 +166,35 @@ def repair_relations(
             rel = "/".join(p.relative_to(vault.root).parts)
             vault.write(rel, "".join(out), overwrite=True)
     return {"fixed": fixed, "removed": removed}
+
+
+def flatten_stubs(vault: Vault, now: datetime) -> dict:
+    """Point stub chains at the final canonical; retire dead-end stubs
+    (target missing, retired, or a cycle)."""
+    graph_dir = vault.resolve(GRAPH_ROOT)
+    flattened = retired = 0
+    if not graph_dir.is_dir():
+        return {"flattened": 0, "retired_stubs": 0}
+    for p in sorted(graph_dir.rglob("*.md")):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        meta = parse_frontmatter(text)
+        if not meta.get("merged_into") or meta.get("retired"):
+            continue
+        target = str(meta["merged_into"])
+        status, _ = _target_status(vault, target)
+        if status == "live":
+            continue
+        rel = "/".join(p.relative_to(vault.root).parts)
+        final = resolve_redirect(vault, target)
+        if final:
+            meta["merged_into"] = final
+            stem = final.rsplit("/", 1)[-1]
+            fm = "---\n" + yaml.safe_dump(meta, sort_keys=False,
+                                          default_flow_style=None) + "---\n\n"
+            vault.write(rel, fm + f"# {p.stem}\n\nMerged into [[{stem}]].\n",
+                        overwrite=True)
+            flattened += 1
+        else:
+            retire_note(vault, rel, now, reason="merge redirect target gone")
+            retired += 1
+    return {"flattened": flattened, "retired_stubs": retired}
