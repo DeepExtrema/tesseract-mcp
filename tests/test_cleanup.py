@@ -4,7 +4,7 @@ from datetime import datetime
 
 from tesseract_mcp import cache, cleanup, consolidate, indexer
 from tesseract_mcp.extractor import Extraction
-from tesseract_mcp.graphstore import GraphStore
+from tesseract_mcp.graphstore import GraphStore, resolve_redirect
 from tesseract_mcp.search import parse_frontmatter
 
 NOW = datetime(2026, 7, 13, 12, 0, 0)
@@ -110,3 +110,108 @@ def test_cache_rebuild_skips_retired(vault):
     _retire(vault, "Claude/Graph/Organizations/Acme.md")
     cache.rebuild(vault, indexer.db_path(vault.root))
     assert cache.find_entity(indexer.db_path(vault.root), "Acme") == []
+
+
+def _stub(vault, folder, name, target_path):
+    """A merge-redirect stub, exactly as consolidate._apply_one writes them."""
+    rel = f"Claude/Graph/{folder}/{name}.md"
+    stem = target_path.rsplit("/", 1)[-1]
+    vault.write(rel,
+                ("---\nentity: organization\n"
+                 f"merged_into: {target_path}\n---\n\n"
+                 f"# {name}\n\nMerged into [[{stem}]].\n"),
+                overwrite=True)
+    return rel[:-3]
+
+
+def test_resolve_redirect_follows_chain_to_live(vault):
+    GraphStore(vault).upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Mid", "Claude/Graph/Organizations/Canonical")
+    _stub(vault, "Organizations", "Old", "Claude/Graph/Organizations/Mid")
+    assert resolve_redirect(vault, "Claude/Graph/Organizations/Old") == \
+        "Claude/Graph/Organizations/Canonical"
+
+
+def test_resolve_redirect_none_on_cycle_and_missing(vault):
+    _stub(vault, "Organizations", "A", "Claude/Graph/Organizations/B")
+    _stub(vault, "Organizations", "B", "Claude/Graph/Organizations/A")
+    assert resolve_redirect(vault, "Claude/Graph/Organizations/A") is None
+    assert resolve_redirect(vault, "Claude/Graph/Organizations/Ghost") is None
+
+
+def test_resolve_redirect_gives_up_past_max_depth(vault):
+    GraphStore(vault).upsert_entity(_ent("Live"))
+    prev = "Claude/Graph/Organizations/Live"
+    for i in range(6):  # S0 -> Live, S1 -> S0, ... S5 -> S4: 6-hop chain
+        prev = _stub(vault, "Organizations", f"S{i}", prev)
+    assert resolve_redirect(vault, prev) is None
+    # a shorter suffix of the same chain still resolves
+    assert resolve_redirect(vault, "Claude/Graph/Organizations/S1") == \
+        "Claude/Graph/Organizations/Live"
+
+
+def test_repair_relations_rewrites_stub_target(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Src"))
+    store.upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Dup", "Claude/Graph/Organizations/Canonical")
+    store.add_relation("Claude/Graph/Organizations/Src.md", "uses",
+                       "Claude/Graph/Organizations/Dup.md")
+    result = cleanup.repair_relations(vault)
+    text = vault.read("Claude/Graph/Organizations/Src.md")
+    assert "- uses [[Claude/Graph/Organizations/Canonical|Canonical]]" in text
+    assert "Dup" not in text
+    assert result == {"fixed": 1, "removed": 0}
+
+
+def test_repair_relations_removes_missing_target(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Src"))
+    store.add_relation("Claude/Graph/Organizations/Src.md", "uses",
+                       "Claude/Graph/Organizations/Ghost.md")
+    result = cleanup.repair_relations(vault)
+    assert "Ghost" not in vault.read("Claude/Graph/Organizations/Src.md")
+    assert result == {"fixed": 0, "removed": 1}
+
+
+def test_repair_relations_dedupes_when_canonical_already_present(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Src"))
+    store.upsert_entity(_ent("Canonical"))
+    _stub(vault, "Organizations", "Dup", "Claude/Graph/Organizations/Canonical")
+    store.add_relation("Claude/Graph/Organizations/Src.md", "uses",
+                       "Claude/Graph/Organizations/Canonical.md")
+    store.add_relation("Claude/Graph/Organizations/Src.md", "uses",
+                       "Claude/Graph/Organizations/Dup.md")
+    result = cleanup.repair_relations(vault)
+    text = vault.read("Claude/Graph/Organizations/Src.md")
+    assert text.count("[[Claude/Graph/Organizations/Canonical|") == 1
+    assert result == {"fixed": 0, "removed": 1}
+
+
+def test_repair_relations_respects_cap(vault):
+    store = GraphStore(vault)
+    store.upsert_entity(_ent("Src"))
+    store.add_relation("Claude/Graph/Organizations/Src.md", "uses",
+                       "Claude/Graph/Organizations/GhostA.md")
+    store.add_relation("Claude/Graph/Organizations/Src.md", "cites",
+                       "Claude/Graph/Organizations/GhostB.md")
+    result = cleanup.repair_relations(vault, limit=1)
+    assert result["fixed"] + result["removed"] == 1
+
+
+def test_repair_relations_skips_stub_and_retired_sources(vault):
+    """Relation lines INSIDE stubs/tombstones are never edited — those notes
+    are frozen redirects/audit records, not live graph state."""
+    dangling = "- uses [[Claude/Graph/Organizations/Ghost|Ghost]]"
+    vault.write("Claude/Graph/Organizations/Stubby.md",
+                ("---\nentity: organization\n"
+                 "merged_into: Claude/Graph/Organizations/X\n---\n\n"
+                 f"# Stubby\n\n## Relations\n{dangling}\n"), overwrite=True)
+    vault.write("Claude/Graph/Organizations/Tomb.md",
+                ("---\nentity: organization\n"
+                 "retired: \"2026-07-13 12:00\"\n---\n\n"
+                 f"# Tomb\n\n## Relations\n{dangling}\n"), overwrite=True)
+    assert cleanup.repair_relations(vault) == {"fixed": 0, "removed": 0}
+    assert dangling in vault.read("Claude/Graph/Organizations/Stubby.md")
+    assert dangling in vault.read("Claude/Graph/Organizations/Tomb.md")

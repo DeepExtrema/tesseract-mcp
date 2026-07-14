@@ -25,6 +25,7 @@ from .graphstore import (
     MENTIONS_HEADER,
     RELATIONS_HEADER,
     GraphStore,
+    resolve_redirect,
 )
 from .search import parse_frontmatter
 from .vault import Vault, VaultError
@@ -98,3 +99,70 @@ def retire_note(vault: Vault, rel: str, now: datetime, reason: str) -> None:
     fm = "---\n" + yaml.safe_dump(meta, sort_keys=False,
                                   default_flow_style=None) + "---\n\n"
     vault.write(rel, fm + body, overwrite=True)
+
+
+def _target_status(vault: Vault, path: str) -> tuple[str, str | None]:
+    """('live', None) | ('stub', canonical-or-None) | ('gone', None)."""
+    try:
+        p = vault.resolve(path + ".md")
+    except VaultError:
+        return "gone", None
+    if not p.is_file():
+        return "gone", None
+    meta = parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore"))
+    if meta.get("retired"):
+        return "gone", None
+    if meta.get("merged_into"):
+        return "stub", resolve_redirect(vault, path)
+    return "live", None
+
+
+def repair_relations(
+    vault: Vault, limit: int = MAX_RELATION_FIXES_PER_SWEEP
+) -> dict:
+    """Rewrite relation lines whose target is a merge stub to the final
+    canonical; drop lines whose target is retired or missing. Bounded."""
+    graph_dir = vault.resolve(GRAPH_ROOT)
+    fixed = removed = 0
+    if not graph_dir.is_dir():
+        return {"fixed": 0, "removed": 0}
+    # targets repeat heavily across the graph's relation lines; repair never
+    # touches a target's own frontmatter, so one status per target per pass
+    status_cache: dict[str, tuple[str, str | None]] = {}
+    for p in sorted(graph_dir.rglob("*.md")):
+        if fixed + removed >= limit:
+            break
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        meta = parse_frontmatter(text)
+        if meta.get("merged_into") or meta.get("retired"):
+            continue
+        lines = text.splitlines(keepends=True)
+        out: list[str] = []
+        changed = False
+        for line in lines:
+            m = _RELATION.match(line.strip())
+            if not m or fixed + removed >= limit:
+                out.append(line)
+                continue
+            target = m.group(2).strip()
+            if target not in status_cache:
+                status_cache[target] = _target_status(vault, target)
+            status, canonical = status_cache[target]
+            if status == "live":
+                out.append(line)
+                continue
+            changed = True
+            if status == "stub" and canonical:
+                stem = canonical.rsplit("/", 1)[-1]
+                new = f"- {m.group(1)} [[{canonical}|{stem}]]\n"
+                if new in out or new in lines:
+                    removed += 1  # canonical relation already present
+                else:
+                    out.append(new)
+                    fixed += 1
+            else:
+                removed += 1
+        if changed:
+            rel = "/".join(p.relative_to(vault.root).parts)
+            vault.write(rel, "".join(out), overwrite=True)
+    return {"fixed": fixed, "removed": removed}

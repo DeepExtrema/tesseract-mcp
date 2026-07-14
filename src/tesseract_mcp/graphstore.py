@@ -10,7 +10,7 @@ import yaml
 from .extractor import Extraction
 from .notes import AGENT_NAME, safe_filename
 from .search import parse_frontmatter
-from .vault import Vault
+from .vault import Vault, VaultError
 
 GRAPH_ROOT = "Claude/Graph"
 TYPE_FOLDERS = {
@@ -23,6 +23,35 @@ TYPE_FOLDERS = {
 }
 MENTIONS_HEADER = "## Mentions"
 RELATIONS_HEADER = "## Relations"
+REDIRECT_MAX_DEPTH = 5
+
+
+def resolve_redirect(
+    vault: Vault, path: str, max_depth: int = REDIRECT_MAX_DEPTH
+) -> str | None:
+    """Follow a merged_into chain from an entity path (no .md) to a live
+    entity path. None on a dead end: missing file, retired note, cycle, or
+    a chain deeper than max_depth."""
+    seen: set[str] = set()
+    current = path
+    for _ in range(max_depth + 1):
+        if current in seen:
+            return None
+        seen.add(current)
+        try:
+            p = vault.resolve(current + ".md")
+        except VaultError:
+            return None
+        if not p.is_file():
+            return None
+        meta = parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore"))
+        if meta.get("retired"):
+            return None
+        nxt = meta.get("merged_into")
+        if not nxt:
+            return current
+        current = str(nxt)
+    return None
 
 
 def entity_rel_path(etype: str, name: str) -> str:
