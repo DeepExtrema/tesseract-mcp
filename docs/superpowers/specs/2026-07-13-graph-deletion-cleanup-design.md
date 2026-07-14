@@ -169,6 +169,14 @@ stale). Edits capped at `MAX_RELATION_FIXES_PER_SWEEP` (default 200).
   A stub whose target is missing or retired is itself retired (it redirects to
   nothing). Stubs are otherwise kept indefinitely — they are cheap and preserve
   inbound links; deleting them is out of scope.
+- **Stub-aware entity resolution** (adjacent defect found while grounding this
+  design): `GraphStore.find_entity_note` matches a merge stub's stem/aliases
+  like any note, so a NEW extraction of a merged name can upsert mentions and
+  aliases INTO the stub — whether it hits the stub or the canonical today is
+  decided by folder sort order. Fix: when the matched note is a stub, follow
+  the `merged_into` chain (same resolver, cycle-guarded) and return the
+  canonical; if the chain dead-ends, return the stub unchanged. When the
+  matched note is `retired`, return it so the upsert path can revive it (§2).
 - **Cache pruning:** with `live = {paths from gather_entities}`:
   - `entity_vectors.json`: drop keys ∉ live (atomic rewrite via the existing
     `_save_entity_vectors`, only when something changed);
@@ -246,7 +254,9 @@ splitting only fixes the stranded-member loss.
 - **Modify `src/tesseract_mcp/blocking.py`** — F-cluster balanced chunking;
   `prune_entity_vectors(state_root, live_paths)` helper next to the cache it
   prunes.
-- **Modify `src/tesseract_mcp/graphstore.py`** — revival of retired stubs in
+- **Modify `src/tesseract_mcp/graphstore.py`** — `resolve_redirect` chain
+  resolver lives here (lowest layer that knows the note format; `cleanup.py`
+  imports it); stub-aware `find_entity_note`; revival of retired stubs in
   `upsert_entity_ex`.
 - **Modify `src/tesseract_mcp/consolidate.py`** — `gather_entities` and
   `_resolve_dup_note` skip `retired` notes (one-line guards).
