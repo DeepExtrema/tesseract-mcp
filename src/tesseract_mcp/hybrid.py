@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import bm25 as bm25_mod
 from .embeddings import Embedder, get_note_vectors
-from .search import Hit, iter_candidate_notes
+from .search import Hit, body_text, iter_candidate_notes
 from .vault import Vault
 
 RRF_K = 60
@@ -50,10 +50,16 @@ def _excerpt(text: str, rel: str, query: str) -> str:
     q = query.lower()
     if q in stem.lower():
         return "(title match)"
-    for line in text.splitlines():
+    body = body_text(text)
+    for line in body.splitlines():
         if q in line.lower():
             return line.strip()
-    return text.strip().splitlines()[0][:120] if text.strip() else ""
+    # Semantic-only hit: no literal match anywhere. First body line beats
+    # the old behavior of returning the raw file's first line ("---").
+    for line in body.splitlines():
+        if line.strip():
+            return line.strip()[:120]
+    return ""
 
 
 def _substring_rank(corpus: dict[str, str], query: str, limit: int) -> list[str]:

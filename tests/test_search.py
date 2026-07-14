@@ -1,4 +1,4 @@
-from tesseract_mcp.search import search
+from tesseract_mcp.search import body_text, search
 
 
 def test_finds_content_match(vault):
@@ -55,3 +55,15 @@ def test_single_hit_per_file_with_multiple_matching_lines(vault, vault_dir):
     hits = search(vault, "alpha")
     assert len(hits) == 1
     assert hits[0].excerpt == "alpha first line"
+
+
+def test_body_text_strips_frontmatter():
+    assert body_text("---\ntags: [x]\n---\n\n# T\n\nBody.\n") == "\n\n# T\n\nBody.\n"
+
+
+def test_body_text_without_frontmatter_is_passthrough():
+    assert body_text("# T\n\nBody.\n") == "# T\n\nBody.\n"
+
+
+def test_body_text_unclosed_frontmatter_is_passthrough():
+    assert body_text("---\ntags: [x]\nno closing fence\n") == "---\ntags: [x]\nno closing fence\n"

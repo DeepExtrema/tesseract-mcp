@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -89,6 +90,25 @@ def _coerce(raw: dict) -> Extraction:
     return Extraction(entities, relations)
 
 
+_ERROR_LINE = re.compile(r"\b(ERROR|FATAL)\b", re.IGNORECASE)
+
+
+def _stderr_summary(stderr: str | None, cap: int = 300) -> str:
+    """The most useful `cap` chars of a failed CLI's stderr.
+
+    CLIs like codex print cosmetic warnings first and the fatal error last,
+    so head-truncation blames the wrong cause: prefer the last ERROR/FATAL
+    line, fall back to the tail.
+    """
+    text = (stderr or "").strip()
+    if not text:
+        return ""
+    for line in reversed(text.splitlines()):
+        if _ERROR_LINE.search(line):
+            return line.strip()[:cap]
+    return text[-cap:]
+
+
 class CliExtractor:
     COMMANDS = {"codex": ["codex", "exec"], "claude": ["claude", "-p"]}
 
@@ -142,7 +162,7 @@ class CliExtractor:
             raise ExtractorError(f"failed to run {self.backend}: {e}") from e
         if proc.returncode != 0:
             raise ExtractorError(
-                f"{self.backend} exited {proc.returncode}: {(proc.stderr or '')[:300]}"
+                f"{self.backend} exited {proc.returncode}: {_stderr_summary(proc.stderr)}"
             )
         return proc.stdout or ""
 

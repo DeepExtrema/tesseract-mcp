@@ -10,6 +10,7 @@ from tesseract_mcp.extractor import (
     Extraction,
     ExtractorError,
     _coerce,
+    _stderr_summary,
     consolidation_extractor,
     extraction_extractor,
 )
@@ -299,3 +300,29 @@ def test_factory_env_overrides(monkeypatch):
     monkeypatch.setenv("TESSERACT_CONSOLIDATE_MODEL", "opus")
     assert extraction_extractor().model == "sonnet"
     assert consolidation_extractor().model == "opus"
+
+
+def test_stderr_summary_prefers_last_error_line():
+    noise = ("2026-07-11T12:32:12Z ERROR codex_core::session: failed to "
+             "load skill X: invalid name\n") * 3
+    tail = "OpenAI Codex v0.130.0\nERROR: You've hit your usage limit.\n"
+    assert _stderr_summary(noise + tail) == "ERROR: You've hit your usage limit."
+
+
+def test_stderr_summary_falls_back_to_tail_when_no_error_line():
+    assert _stderr_summary("x" * 400) == "x" * 300
+
+
+def test_stderr_summary_empty_and_none_return_empty():
+    assert _stderr_summary("") == ""
+    assert _stderr_summary(None) == ""
+    assert _stderr_summary("   \n  ") == ""
+
+
+def test_nonzero_exit_message_names_last_error_line():
+    stderr = ("ERROR cosmetic skill-load noise\n"
+              "OpenAI Codex v0.130.0\n"
+              "ERROR: usage limit hit")
+    runner = make_runner([FakeProc(stdout="", returncode=1, stderr=stderr)])
+    with pytest.raises(ExtractorError, match="usage limit hit"):
+        CliExtractor(backend="codex", runner=runner, which=lambda n: n).extract("N.md", "c")

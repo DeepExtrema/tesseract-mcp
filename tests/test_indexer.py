@@ -69,6 +69,18 @@ def test_load_manifest_drops_legacy_caretaker_entries(vault):
     assert "Claude/Librarian.md" not in loaded["failures"]
 
 
+def test_load_manifest_normalizes_missing_keys(vault):
+    """A hand-repaired manifest may lack a top-level key; run() indexes
+    both directly (failures.clear/.get), so load must guarantee them."""
+    indexer._manifest_path(vault.root).write_text('{"hashes": {}}', encoding="utf-8")
+    loaded = indexer.load_manifest(vault.root)
+    assert loaded["failures"] == {}
+    assert loaded["hashes"] == {}
+    # retry_failures path must not KeyError on such a manifest
+    counts = indexer.run(vault, FakeExtractor(), retry_failures=True)
+    assert counts["failed"] == 0
+
+
 def test_run_processes_all_then_nothing(vault):
     fx = FakeExtractor({"Daily.md": Extraction([ACME], [])})
     counts = indexer.run(vault, fx)
@@ -255,3 +267,24 @@ def test_stale_mentions_retracted_on_reprocess(vault):
     counts = indexer.run(vault, FakeExtractor())   # re-extraction finds no entities
     assert counts["mentions_retracted"] == 1
     assert "[[Claude/Inbox/story|" not in vault.read(acme_rel)
+
+
+def test_run_retry_failures_reattempts_maxed_out_notes(vault):
+    for _ in range(indexer.MAX_ATTEMPTS):
+        indexer.run(vault, FakeExtractor(fail={"Daily.md"}))
+    benched = FakeExtractor()
+    indexer.run(vault, benched)
+    assert "Daily.md" not in benched.calls  # attempts exhausted: benched
+
+    retried = FakeExtractor()
+    counts = indexer.run(vault, retried, retry_failures=True)
+    assert "Daily.md" in retried.calls
+    assert counts["failed"] == 0
+    assert "Daily.md" not in indexer.load_manifest(vault.root)["failures"]
+
+
+def test_run_retry_failures_skips_unchanged_tracked_notes(vault):
+    indexer.run(vault, FakeExtractor())  # index everything cleanly
+    fx = FakeExtractor()
+    counts = indexer.run(vault, fx, retry_failures=True)
+    assert counts["processed"] == 0 and fx.calls == []
