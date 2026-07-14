@@ -120,6 +120,19 @@ def test_retract_deleted_scans_markdown_when_db_missing(vault):
     indexer.db_path(vault.root).unlink()
     result = cleanup.retract_deleted(vault)
     assert result["removed_mentions"] == 1
+
+
+def test_retract_deleted_tolerates_hand_deleted_entity_note(vault):
+    """The cache may hold a mention row for an entity note a human deleted;
+    the VaultError from remove_mention must not abort the pass and the
+    manifest entry must still be pruned."""
+    _index_note(vault, "Projects/Doomed.md", [_ent("Acme")])
+    (vault.root / "Projects" / "Doomed.md").unlink()
+    (vault.root / "Claude" / "Graph" / "Organizations" / "Acme.md").unlink()
+    result = cleanup.retract_deleted(vault)
+    assert result == {"retracted_notes": 1, "removed_mentions": 0,
+                      "remaining": 0}
+    assert "Projects/Doomed.md" not in indexer.load_manifest(vault.root)["hashes"]
 ```
 
 - [ ] **Step 2: Run to confirm failure**
@@ -223,7 +236,7 @@ def retract_deleted(vault: Vault, limit: int = MAX_RETRACTIONS_PER_SWEEP) -> dic
 - [ ] **Step 4: Run to confirm pass**
 
 Run: `python -m pytest tests/test_cleanup.py -v`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -466,6 +479,34 @@ def test_repair_relations_respects_cap(vault):
                        "Claude/Graph/Organizations/GhostB.md")
     result = cleanup.repair_relations(vault, limit=1)
     assert result["fixed"] + result["removed"] == 1
+
+
+def test_resolve_redirect_gives_up_past_max_depth(vault):
+    GraphStore(vault).upsert_entity(_ent("Live"))
+    prev = "Claude/Graph/Organizations/Live"
+    for i in range(6):  # S0 -> Live, S1 -> S0, ... S5 -> S4: 6-hop chain
+        prev = _stub(vault, "Organizations", f"S{i}", prev)
+    assert resolve_redirect(vault, prev) is None
+    # a shorter suffix of the same chain still resolves
+    assert resolve_redirect(vault, "Claude/Graph/Organizations/S1") == \
+        "Claude/Graph/Organizations/Live"
+
+
+def test_repair_relations_skips_stub_and_retired_sources(vault):
+    """Relation lines INSIDE stubs/tombstones are never edited — those notes
+    are frozen redirects/audit records, not live graph state."""
+    dangling = "- uses [[Claude/Graph/Organizations/Ghost|Ghost]]"
+    vault.write("Claude/Graph/Organizations/Stubby.md",
+                ("---\nentity: organization\n"
+                 "merged_into: Claude/Graph/Organizations/X\n---\n\n"
+                 f"# Stubby\n\n## Relations\n{dangling}\n"), overwrite=True)
+    vault.write("Claude/Graph/Organizations/Tomb.md",
+                ("---\nentity: organization\n"
+                 "retired: \"2026-07-13 12:00\"\n---\n\n"
+                 f"# Tomb\n\n## Relations\n{dangling}\n"), overwrite=True)
+    assert cleanup.repair_relations(vault) == {"fixed": 0, "removed": 0}
+    assert dangling in vault.read("Claude/Graph/Organizations/Stubby.md")
+    assert dangling in vault.read("Claude/Graph/Organizations/Tomb.md")
 ```
 
 - [ ] **Step 2: Run to confirm failure**
@@ -539,6 +580,9 @@ def repair_relations(
     fixed = removed = 0
     if not graph_dir.is_dir():
         return {"fixed": 0, "removed": 0}
+    # targets repeat heavily across the graph's relation lines; repair never
+    # touches a target's own frontmatter, so one status per target per pass
+    status_cache: dict[str, tuple[str, str | None]] = {}
     for p in sorted(graph_dir.rglob("*.md")):
         if fixed + removed >= limit:
             break
@@ -554,7 +598,10 @@ def repair_relations(
             if not m or fixed + removed >= limit:
                 out.append(line)
                 continue
-            status, canonical = _target_status(vault, m.group(2).strip())
+            target = m.group(2).strip()
+            if target not in status_cache:
+                status_cache[target] = _target_status(vault, target)
+            status, canonical = status_cache[target]
             if status == "live":
                 out.append(line)
                 continue
@@ -1161,6 +1208,25 @@ def test_backstop_cold_until_interval_then_reruns(vault, vault_dir):
                         embedder=FakeEmbedder(),
                         now=NOW + timedelta(days=14))
     assert fake.calls > calls_after_drain       # first backstop cycle
+
+
+def test_empty_slice_sweep_still_starts_backstop_clock(vault, vault_dir):
+    """Carried-over state: everything checked but the clock never started
+    (pre-fix deployments could leave this). The 'nothing to check' early
+    return must still stamp the marker or the backstop stays off forever."""
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    state = librarian.load_state(vault)
+    del state["consolidation"]["backstop_last_advance"]
+    librarian.save_state(vault, state)
+    later = NOW + timedelta(minutes=5)
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=later)
+    con = librarian.load_state(vault)["consolidation"]
+    assert con["backstop_last_advance"] == later.strftime(librarian.TS_FMT)
 ```
 
 - [ ] **Step 2: Run to confirm failure**
@@ -1190,6 +1256,24 @@ In `_consolidate_step`, replace the marker-stamping line in the `if apply:` bloc
         if used_backstop or "backstop_last_advance" not in con:
             con["backstop_last_advance"] = now.strftime(TS_FMT)
 ```
+
+And replace the empty-slice early return so the clock also starts when a
+sweep finds nothing to check (otherwise carried-over state with a full
+`checked_hash` and no marker leaves the backstop off until some entity's
+identity text happens to change):
+
+```python
+    if not slice_:
+        if apply and "backstop_last_advance" not in con:
+            con["backstop_last_advance"] = now.strftime(TS_FMT)
+            state["consolidation"] = con
+        return {"ran": False, "reason": "nothing to check", "proposed": [],
+                "skipped_batches": 0}
+```
+
+(The "no entities" early return above it stays unstamped on purpose: with
+zero entities there is nothing to re-check, and the first entities to appear
+are unchecked, which makes the slice non-empty and stamps normally.)
 
 - [ ] **Step 4: Run to confirm pass**
 
@@ -1506,3 +1590,26 @@ No gaps.
 - Entity paths are vault-relative WITHOUT `.md` everywhere except `retire_note`/`remove_mention`/`find_entity_note` rels, which carry `.md` — each call site appends/strips explicitly as shown. ✓
 
 Known accepted limitations (documented in the spec): relations asserted solely by a deleted note survive while both endpoints live (no provenance — out of scope); chunk boundaries can still separate a candidate pair (inherent to any size cap).
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — (quota exhausted until 2026-08-10) | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR (PLAN) | 2 issues + 3 test gaps, 0 critical — all amended in place |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — (no UI surface) | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+Eng review 2026-07-13 verified every plan claim against source (F-backstop at
+librarian.py:59, F-cluster at blocking.py:136, stub-blind `find_entity_note`
+at graphstore.py:54 — all real). Amendments applied: Task 8 stamps the
+backstop clock on the empty-slice early return (carried-over-state test
+added); Task 3 memoizes `_target_status` per pass and gains depth-cap and
+frozen-source tests; Task 1 gains the hand-deleted-entity tolerance test;
+spec §2 corrected to the markdown-pass orphan check. Outside voice skipped
+(codex quota; claims already source-verified). Decisions: Tasks 8+9 stay in
+this branch (nightly sweep not yet armed, no urgency to split).
+
+**UNRESOLVED:** 0
+**VERDICT:** ENG CLEARED — ready to implement.

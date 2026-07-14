@@ -1,8 +1,10 @@
 # Graph deletion & orphaned-entity cleanup
 
 Date: 2026-07-13
-Status: draft — awaiting review
-Branch: feat/graph-deletion-cleanup (stacked on feat/graph-scale-caretaker)
+Status: reviewed — eng review passed 2026-07-13, amendments applied (see the
+plan's GSTACK REVIEW REPORT)
+Branch: feat/graph-deletion-cleanup (off codex/architecture-roadmap;
+sub-project 1 merged via PR #7)
 Sub-project: 2 of 2 of the graph-scale caretaker (sub-project 1 was scalable
 entity consolidation — see
 [2026-07-12-scalable-consolidation-design.md](2026-07-12-scalable-consolidation-design.md)).
@@ -106,15 +108,16 @@ after this sweep's retraction pass:
 
 - zero mention lines in its `## Mentions` section, AND
 - zero relation lines in its `## Relations` section, AND
-- zero inbound relations from other live entities (DB `edges` where
-  `dst_path` = the entity).
+- zero inbound relations from other entities (relation lines across graph
+  notes, collected in the same markdown pass — the DB may be one rebuild
+  stale, so the notes are the source of truth).
 
 The relation clauses are load-bearing: `graphstore.apply` creates relation
 ENDPOINTS with no mention line, so mention-count alone would mass-flag
 legitimate relation-only entities.
 
-**Proposal flow.** Detection is a single pass over live entities plus one DB
-query for inbound edges. Each orphan becomes a proposal
+**Proposal flow.** Detection is a single markdown pass over the graph notes
+(inbound edges collected along the way; no DB dependency). Each orphan becomes a proposal
 `{path, name, type, reason}` in the librarian state's `cleanup` block
 (`pending_retirements`, deduped by path, capped at `MAX_PENDING_RETIREMENTS`,
 default 200). The list self-heals: every sweep, proposals whose entity regained
