@@ -70,13 +70,18 @@ set, seeds settings (embed model pinned to what the search stack reads), and
 installs the agent conventions tree. `--check` reports version drift.
 
 ### The recall harness
-Four Claude Code skills turn the vault into a memory you can question:
+Claude Code skills turn the vault into a memory you can question:
 `/recall` (researched answers, every claim cited as a `[[wikilink]]`),
 `/digest` (the review ritual), `/resume` (project briefings), and
 `/connections` (graph serendipity). `/recall` files every answer into
 `Claude/Answers/`, where the Librarian indexes it like any note — so
 answers become retrieval sources and the vault compounds from asking
-questions, not just ingesting. Skills live in [`skills/`](skills/) and
+questions, not just ingesting. Five further rituals are drafted and
+awaiting their acceptance runs: `/clip` (compile one external source
+into a cited Inbox note), `/distill` (promote repeated captures into
+evergreen concepts), `/decide` (the append-only decision ledger),
+`/rounds` (read-only caretaker health inspection), and `/dossier`
+(deep multi-section briefings). Skills live in [`skills/`](skills/) and
 install with `python -m tesseract_mcp.skill_sync` (additive; `--check`
 reports drift; existing skills are never modified without `--force`).
 
