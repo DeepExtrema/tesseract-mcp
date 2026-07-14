@@ -33,8 +33,8 @@ def test_constants_match_spec():
     assert blocking.MAX_ENTITIES_PER_CALL == 40
 
 
-def test_backstop_due_on_first_pass():
-    assert librarian._backstop_due({}, NOW) is True
+def test_backstop_not_due_before_first_stamp():
+    assert librarian._backstop_due({}, NOW) is False
 
 
 def test_backstop_not_due_before_interval():
@@ -515,3 +515,48 @@ def test_invalid_sheet_rows_health(vault_dir):
 
 def test_invalid_sheet_rows_zero_without_sheets(vault):
     assert librarian.count_invalid_sheet_rows(vault) == 0
+
+
+def test_first_apply_sweep_stamps_backstop_clock(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    con = librarian.load_state(vault)["consolidation"]
+    assert con["backstop_last_advance"] == NOW.strftime(librarian.TS_FMT)
+
+
+def test_backstop_cold_until_interval_then_reruns(vault, vault_dir):
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    _entity_note(vault_dir, "Organizations", "Acme Corp", "organization")
+    fake = FakeConsolidator()
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(), now=NOW)
+    calls_after_drain = fake.calls
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(),
+                        now=NOW + timedelta(days=13))
+    assert fake.calls == calls_after_drain      # would have re-run pre-fix
+    librarian.run_sweep(vault, extractor=FakeExtractor(), consolidator=fake,
+                        embedder=FakeEmbedder(),
+                        now=NOW + timedelta(days=14))
+    assert fake.calls > calls_after_drain       # first backstop cycle
+
+
+def test_empty_slice_sweep_still_starts_backstop_clock(vault, vault_dir):
+    """Carried-over state: everything checked but the clock never started
+    (pre-fix deployments could leave this). The 'nothing to check' early
+    return must still stamp the marker or the backstop stays off forever."""
+    _entity_note(vault_dir, "Organizations", "Acme", "organization")
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=NOW)
+    state = librarian.load_state(vault)
+    del state["consolidation"]["backstop_last_advance"]
+    librarian.save_state(vault, state)
+    later = NOW + timedelta(minutes=5)
+    librarian.run_sweep(vault, extractor=FakeExtractor(),
+                        consolidator=FakeConsolidator(),
+                        embedder=FakeEmbedder(), now=later)
+    con = librarian.load_state(vault)["consolidation"]
+    assert con["backstop_last_advance"] == later.strftime(librarian.TS_FMT)

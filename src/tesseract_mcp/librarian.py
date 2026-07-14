@@ -57,11 +57,13 @@ def save_state(vault: Vault, state: dict) -> None:
 
 
 def _backstop_due(con: dict, now: datetime) -> bool:
-    """The rolling backstop re-check runs at most once per interval; the
-    unchecked/changed path runs every sweep regardless."""
+    """The rolling backstop re-check runs at most once per interval. An
+    absent marker means the clock has not started (it is stamped on the
+    first apply sweep), NOT that a full re-check is immediately owed — the
+    cold-start unchecked drain already covers every entity."""
     last = con.get("backstop_last_advance")
     if not last:
-        return True
+        return False
     return (now - datetime.strptime(last, TS_FMT)).days >= BACKSTOP_MIN_INTERVAL_DAYS
 
 
@@ -229,6 +231,12 @@ def _consolidate_step(
     slice_, new_cursor, used_backstop = blocking.select_slice(
         entities, checked_hash, cursor, blocking.SLICE_SIZE, backstop_due=backstop_due)
     if not slice_:
+        if apply and "backstop_last_advance" not in con:
+            # carried-over state can have every entity checked but no
+            # marker; without a stamp here the backstop stays off until
+            # some entity's identity text happens to change
+            con["backstop_last_advance"] = now.strftime(TS_FMT)
+            state["consolidation"] = con
         return {"ran": False, "reason": "nothing to check", "proposed": [],
                 "skipped_batches": 0}
     if consolidator is None:
@@ -245,7 +253,7 @@ def _consolidate_step(
         con["cursor"] = new_cursor
         con["pending_proposals"] = proposed
         con["last_pass"] = now.strftime(TS_FMT)
-        if used_backstop:
+        if used_backstop or "backstop_last_advance" not in con:
             con["backstop_last_advance"] = now.strftime(TS_FMT)
         state["consolidation"] = con
     return {"ran": True, "reason": reason, "proposed": proposed,
