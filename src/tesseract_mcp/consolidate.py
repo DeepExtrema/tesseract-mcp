@@ -8,7 +8,9 @@ from datetime import datetime
 
 import yaml
 
+from . import blocking
 from . import cache
+from . import embeddings as embeddings_mod
 from .extractor import consolidation_extractor
 from .graphstore import (
     GRAPH_ROOT,
@@ -18,8 +20,8 @@ from .graphstore import (
     TYPE_FOLDERS,
     entity_rel_path,
 )
-from .indexer import db_path
-from .search import parse_frontmatter
+from .indexer import db_path, state_dir
+from .search import parse_frontmatter, body_text
 from .vault import Vault
 
 PROMPT = """You are deduplicating entities in a personal knowledge graph.
@@ -45,6 +47,17 @@ def _section_lines(text: str, header: str) -> list[str]:
     return [l for l in section.splitlines() if l.startswith("- ")]
 
 
+def _entity_summary(text: str) -> str:
+    """Body text between the `# name` H1 and `## Mentions` — the note
+    template writes the entity summary there (not frontmatter)."""
+    body = body_text(text)
+    cut = body.find(MENTIONS_HEADER)
+    if cut != -1:
+        body = body[:cut]
+    lines = [l for l in body.splitlines() if not l.startswith("# ")]
+    return "\n".join(lines).strip()
+
+
 def gather_entities(vault: Vault) -> list[dict]:
     out: list[dict] = []
     graph_dir = vault.resolve(GRAPH_ROOT)
@@ -61,21 +74,14 @@ def gather_entities(vault: Vault) -> list[dict]:
         out.append(
             {"name": p.stem, "type": str(meta.get("entity") or "topic"),
              "path": "/".join(p.relative_to(vault.root).parts)[:-3],
-             "aliases": [str(a) for a in aliases]}
+             "aliases": [str(a) for a in aliases],
+             "summary": _entity_summary(text)}
         )
     return out
 
 
-def propose_merges(backend, entities: list[dict]) -> list[dict]:
-    if not entities:
-        return []
-    listing = "\n".join(
-        f"{e['type']} | {e['name']} | {', '.join(e['aliases']) or '-'}"
-        for e in entities
-    )
-    raw = backend.complete_json(PROMPT.format(listing=listing))
-    known = {(e["type"], e["name"].casefold()) for e in entities}
-    merges = []
+def _validate_merges(raw: dict, known: set[tuple[str, str]]) -> list[dict]:
+    out = []
     for m in raw.get("merges") or []:
         etype = str(m.get("type") or "").lower()
         canonical = str(m.get("canonical") or "").strip()
@@ -87,7 +93,47 @@ def propose_merges(backend, entities: list[dict]) -> list[dict]:
             continue
         if any((etype, d.casefold()) not in known for d in dups):
             continue
-        merges.append({"type": etype, "canonical": canonical, "duplicates": dups})
+        out.append({"type": etype, "canonical": canonical, "duplicates": dups})
+    return out
+
+
+def _listing(entities: list[dict]) -> str:
+    return "\n".join(
+        f"{e['type']} | {e['name']} | {', '.join(e['aliases']) or '-'}"
+        for e in entities
+    )
+
+
+def adjudicate_batches(
+    backend, batches: list[list[list[dict]]], all_entities: list[dict]
+) -> tuple[list[dict], int]:
+    """Run one LLM call per batch, isolating failures. A batch is a list of
+    clusters; a cluster is a list of entity dicts. Returns (merges, skipped)."""
+    known = {(e["type"], e["name"].casefold()) for e in all_entities}
+    merges: list[dict] = []
+    seen: set[tuple] = set()
+    skipped = 0
+    for batch in batches:
+        entities = [e for cluster in batch for e in cluster]
+        try:
+            raw = backend.complete_json(PROMPT.format(listing=_listing(entities)))
+        except Exception:  # noqa: BLE001 — one bad batch must not fail the step
+            skipped += 1
+            continue
+        for m in _validate_merges(raw, known):
+            key = (m["type"], m["canonical"].casefold(),
+                   tuple(sorted(d.casefold() for d in m["duplicates"])))
+            if key in seen:
+                continue
+            seen.add(key)
+            merges.append(m)
+    return merges, skipped
+
+
+def propose_merges(backend, entities: list[dict]) -> list[dict]:
+    if not entities:
+        return []
+    merges, _ = adjudicate_batches(backend, [[entities]], entities)
     return merges
 
 
@@ -160,11 +206,21 @@ def _apply_one(vault: Vault, store: GraphStore, merge: dict, now: datetime) -> N
         vault.write(dup_rel, stub, overwrite=True)
 
 
-def run(vault: Vault, backend, apply: bool = False) -> dict:
+def run(vault: Vault, backend, apply: bool = False, embedder=None) -> dict:
     entities = gather_entities(vault)
-    merges = propose_merges(backend, entities)
-    result = {"entities": len(entities), "proposed": merges, "applied": False,
-              "merged_entities": 0}
+    result = {"entities": len(entities), "proposed": [], "applied": False,
+              "merged_entities": 0, "skipped_batches": 0}
+    if not entities:
+        return result
+    if embedder is None:
+        embedder = embeddings_mod.SentenceTransformerEmbedder()
+    state_root = state_dir(vault.root)
+    vectors = blocking.compute_entity_vectors(entities, state_root, embedder)
+    clusters = blocking.candidate_clusters(entities, entities, vectors)
+    batches = blocking.batch_clusters(clusters)
+    merges, skipped = adjudicate_batches(backend, batches, entities)
+    result["proposed"] = merges
+    result["skipped_batches"] = skipped
     if apply and merges:
         store = GraphStore(vault)
         now = datetime.now()
