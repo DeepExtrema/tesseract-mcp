@@ -315,7 +315,7 @@ for how to stand it up.
 | `organizer.py` | Autonomous vault organizer: files notes where their semantic neighbors live, via cosine-weighted K-nearest-neighbor folder vote. |
 | `provision.py` | Provisions a fresh Obsidian vault as a Tesseract mind database (plugins, settings, conventions). |
 | `sc_adapter.py` | Reads Smart Connections' local embeddings directly from disk. |
-| `search.py` | Full-text search across the vault; also the shared candidate-filtering logic used by hybrid search. |
+| `search.py` | Shared note-parsing and vault-scanning helpers: frontmatter parsing, the canonical note walk, and the candidate filtering used by hybrid search. |
 | `server.py` | FastMCP server exposing the Tesseract vault to Claude. |
 | `tasks.py` | Task operations compatible with the Obsidian Tasks plugin format. |
 | `vault.py` | Filesystem access to the Obsidian vault with safety rules (path containment, `Claude/` write quarantine). |

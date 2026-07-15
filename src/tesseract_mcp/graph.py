@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .search import SKIP_DIRS, parse_frontmatter
+from .search import as_str_list, iter_note_files, parse_frontmatter
 from .vault import Vault
 
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)")
@@ -21,15 +21,6 @@ def _json_safe(value):
     return str(value)  # dates and anything exotic -> ISO-ish string
 
 
-def _vault_files(vault: Vault, folder: str | None = None):
-    base = vault.resolve(folder) if folder else vault.root
-    for path in sorted(base.rglob("*.md")):
-        rel_parts = path.relative_to(vault.root).parts
-        if SKIP_DIRS & set(rel_parts):
-            continue
-        yield path, "/".join(rel_parts)
-
-
 def query_notes(
     vault: Vault,
     project: str | None = None,
@@ -39,15 +30,12 @@ def query_notes(
 ) -> list[dict]:
     """Dataview-lite: filter notes by frontmatter fields, return metadata."""
     results: list[dict] = []
-    for path, rel in _vault_files(vault, folder):
+    for path, rel in iter_note_files(vault, folder):
         meta = parse_frontmatter(path.read_text(encoding="utf-8", errors="ignore"))
         if project is not None and str(meta.get("project", "")).casefold() != project.casefold():
             continue
         if tags:
-            note_tags = meta.get("tags") or []
-            if not isinstance(note_tags, list):
-                note_tags = [note_tags]
-            note_tags = {str(t).casefold() for t in note_tags}
+            note_tags = {t.casefold() for t in as_str_list(meta.get("tags"))}
             if not {t.casefold() for t in tags} <= note_tags:
                 continue
         if project is None and not tags and not meta:
@@ -63,7 +51,7 @@ def get_backlinks(vault: Vault, path: str) -> list[str]:
     target = vault.resolve(path)
     stem = target.stem.casefold()
     hits: list[str] = []
-    for p, rel in _vault_files(vault):
+    for p, rel in iter_note_files(vault):
         if p == target:
             continue
         text = p.read_text(encoding="utf-8", errors="ignore")
@@ -78,7 +66,7 @@ def get_backlinks(vault: Vault, path: str) -> list[str]:
 def list_recent(vault: Vault, n: int = 10) -> list[dict]:
     """Most recently modified notes, newest first."""
     entries = [
-        (path.stat().st_mtime, rel) for path, rel in _vault_files(vault)
+        (path.stat().st_mtime, rel) for path, rel in iter_note_files(vault)
     ]
     entries.sort(reverse=True)
     return [

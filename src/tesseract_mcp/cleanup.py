@@ -18,14 +18,15 @@ import yaml
 
 from . import cache
 from . import indexer
-from .cache import _RELATION
-from .consolidate import _entity_summary, _section_lines
 from .graphstore import (
     GRAPH_ROOT,
     MENTIONS_HEADER,
+    RELATION_LINE,
     RELATIONS_HEADER,
     GraphStore,
+    entity_summary,
     resolve_redirect,
+    section_lines,
 )
 from .search import parse_frontmatter
 from .vault import Vault, VaultError
@@ -91,7 +92,7 @@ def retire_note(vault: Vault, rel: str, now: datetime, reason: str) -> None:
     text = vault.read(rel)
     meta = parse_frontmatter(text)
     meta["retired"] = now.strftime("%Y-%m-%d %H:%M")
-    summary = _entity_summary(text)
+    summary = entity_summary(text)
     stem = rel.rsplit("/", 1)[-1][:-3]
     body = (f"# {stem}\n\n"
             + (f"{summary}\n\n" if summary else "")
@@ -140,7 +141,7 @@ def repair_relations(
         out: list[str] = []
         changed = False
         for line in lines:
-            m = _RELATION.match(line.strip())
+            m = RELATION_LINE.match(line.strip())
             if not m or fixed + removed >= limit:
                 out.append(line)
                 continue
@@ -213,9 +214,9 @@ def find_orphans(vault: Vault) -> list[dict]:
     for p in sorted(graph_dir.rglob("*.md")):
         text = p.read_text(encoding="utf-8", errors="ignore")
         meta = parse_frontmatter(text)
-        rel_lines = _section_lines(text, RELATIONS_HEADER)
+        rel_lines = section_lines(text, RELATIONS_HEADER)
         for line in rel_lines:
-            m = _RELATION.match(line.strip())
+            m = RELATION_LINE.match(line.strip())
             if m:
                 inbound.add(m.group(2).strip())
         if meta.get("merged_into") or meta.get("retired"):
@@ -225,7 +226,7 @@ def find_orphans(vault: Vault) -> list[dict]:
              "name": p.stem,
              "type": str(meta.get("entity") or "topic"),
              "supported": bool(
-                 _section_lines(text, MENTIONS_HEADER) or rel_lines)})
+                 section_lines(text, MENTIONS_HEADER) or rel_lines)})
     return [
         {"path": c["path"], "name": c["name"], "type": c["type"],
          "reason": "orphaned: no mentions or relations"}

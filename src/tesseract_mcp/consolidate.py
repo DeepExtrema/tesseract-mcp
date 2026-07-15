@@ -19,9 +19,12 @@ from .graphstore import (
     GraphStore,
     TYPE_FOLDERS,
     entity_rel_path,
+    entity_summary,
+    merge_aliases,
+    section_lines,
 )
 from .indexer import db_path, state_dir
-from .search import parse_frontmatter, body_text
+from .search import as_str_list, parse_frontmatter
 from .vault import Vault
 
 PROMPT = """You are deduplicating entities in a personal knowledge graph.
@@ -38,26 +41,6 @@ Entities:
 {listing}"""
 
 
-def _section_lines(text: str, header: str) -> list[str]:
-    start = text.find(header)
-    if start == -1:
-        return []
-    nxt = text.find("\n## ", start + len(header))
-    section = text[start : nxt if nxt != -1 else len(text)]
-    return [l for l in section.splitlines() if l.startswith("- ")]
-
-
-def _entity_summary(text: str) -> str:
-    """Body text between the `# name` H1 and `## Mentions` — the note
-    template writes the entity summary there (not frontmatter)."""
-    body = body_text(text)
-    cut = body.find(MENTIONS_HEADER)
-    if cut != -1:
-        body = body[:cut]
-    lines = [l for l in body.splitlines() if not l.startswith("# ")]
-    return "\n".join(lines).strip()
-
-
 def gather_entities(vault: Vault) -> list[dict]:
     out: list[dict] = []
     graph_dir = vault.resolve(GRAPH_ROOT)
@@ -68,14 +51,11 @@ def gather_entities(vault: Vault) -> list[dict]:
         meta = parse_frontmatter(text)
         if meta.get("merged_into") or meta.get("retired"):
             continue
-        aliases = meta.get("aliases") or []
-        if not isinstance(aliases, list):
-            aliases = [aliases]
         out.append(
             {"name": p.stem, "type": str(meta.get("entity") or "topic"),
              "path": "/".join(p.relative_to(vault.root).parts)[:-3],
-             "aliases": [str(a) for a in aliases],
-             "summary": _entity_summary(text)}
+             "aliases": as_str_list(meta.get("aliases")),
+             "summary": entity_summary(text)}
         )
     return out
 
@@ -130,13 +110,6 @@ def adjudicate_batches(
     return merges, skipped
 
 
-def propose_merges(backend, entities: list[dict]) -> list[dict]:
-    if not entities:
-        return []
-    merges, _ = adjudicate_batches(backend, [[entities]], entities)
-    return merges
-
-
 def _resolve_dup_note(vault: Vault, etype: str, name: str) -> str | None:
     """Find duplicate entity note by filename/stem only — not aliases."""
     rel = entity_rel_path(etype, name)
@@ -168,31 +141,13 @@ def _apply_one(vault: Vault, store: GraphStore, merge: dict, now: datetime) -> N
         if dup_rel is None or dup_rel == canon_rel or canon_rel is None:
             continue
         dup_text = vault.read(dup_rel)
-        for line in _section_lines(dup_text, MENTIONS_HEADER):
+        for line in section_lines(dup_text, MENTIONS_HEADER):
             marker = line.split("|", 1)[0] + "|"
             store._insert_line(canon_rel, MENTIONS_HEADER, line, marker)
-        for line in _section_lines(dup_text, RELATIONS_HEADER):
+        for line in section_lines(dup_text, RELATIONS_HEADER):
             store._insert_line(canon_rel, RELATIONS_HEADER, line, line)
-        dup_meta = parse_frontmatter(dup_text)
-        dup_aliases = dup_meta.get("aliases") or []
-        if not isinstance(dup_aliases, list):
-            dup_aliases = [dup_aliases]
-        canon_text = vault.read(canon_rel)
-        canon_meta = parse_frontmatter(canon_text)
-        current = canon_meta.get("aliases") or []
-        if not isinstance(current, list):
-            current = [current]
-        canon_name = canon_rel.rsplit("/", 1)[-1][:-3]
-        known_names = {str(a).casefold() for a in current} | {canon_name.casefold()}
-        added = [a for a in [dup_name, *map(str, dup_aliases)]
-                 if a.casefold() not in known_names]
-        if added:
-            end = canon_text.find("\n---", 3)
-            if end != -1:
-                canon_meta["aliases"] = [str(a) for a in current] + added
-                fm = "---\n" + yaml.safe_dump(canon_meta, sort_keys=False,
-                                              default_flow_style=None) + "---"
-                vault.write(canon_rel, fm + canon_text[end + 4:], overwrite=True)
+        dup_aliases = as_str_list(parse_frontmatter(dup_text).get("aliases"))
+        merge_aliases(vault, canon_rel, [dup_name, *dup_aliases])
         stub_meta = {
             "created": now.strftime("%Y-%m-%d %H:%M"),
             "agent": "claude",

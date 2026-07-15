@@ -8,30 +8,22 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .graphstore import GRAPH_ROOT, MENTIONS_HEADER, RELATIONS_HEADER
-from .search import parse_frontmatter
+from .graphstore import (
+    GRAPH_ROOT,
+    MENTION_LINE,
+    MENTIONS_HEADER,
+    RELATION_LINE,
+    RELATIONS_HEADER,
+    section,
+)
+from .search import as_str_list, parse_frontmatter
 from .vault import Vault
-
-# Mentions are path-qualified: - [[Projects/Sentinel ESG|Sentinel ESG]] — evidence
-# group 1 = full vault-relative path (no .md); group 2 = evidence (optional)
-_MENTION = re.compile(r"^- \[\[([^\]|]+)\|[^\]]+\]\](?:\s+[—-]\s+(.*))?$")
-# Relations are path-qualified the same way: - operates_in [[Claude/Graph/.../X|X]]
-# group 1 = relation name; group 2 = full vault-relative path of target (no .md)
-_RELATION = re.compile(r"^- (\w+) \[\[([^\]|]+)\|[^\]]+\]\]$")
 
 SCHEMA = """
 CREATE TABLE entities (path TEXT, name TEXT, type TEXT, summary TEXT, aliases TEXT);
 CREATE TABLE edges (src_path TEXT, rel TEXT, dst_path TEXT);
 CREATE TABLE mentions (entity_path TEXT, note_path TEXT, evidence TEXT);
 """
-
-
-def _section(text: str, header: str) -> str:
-    start = text.find(header)
-    if start == -1:
-        return ""
-    nxt = text.find("\n## ", start + len(header))
-    return text[start : nxt if nxt != -1 else len(text)]
 
 
 def rebuild(vault: Vault, db_path: Path) -> None:
@@ -54,9 +46,7 @@ def rebuild(vault: Vault, db_path: Path) -> None:
             m = re.search(r"^# (.+)$", text, re.MULTILINE)
             if m:
                 name = m.group(1).strip()
-            aliases = meta.get("aliases") or []
-            if not isinstance(aliases, list):
-                aliases = [aliases]
+            aliases = as_str_list(meta.get("aliases"))
             summary = ""
             after = text.split("\n# ", 1)[-1]
             for line in after.splitlines()[1:]:
@@ -67,17 +57,17 @@ def rebuild(vault: Vault, db_path: Path) -> None:
             entity_path = rel_path[:-3] if rel_path.endswith(".md") else rel_path
             con.execute(
                 "INSERT INTO entities VALUES (?,?,?,?,?)",
-                (entity_path, name, etype, summary, json.dumps([str(a) for a in aliases])),
+                (entity_path, name, etype, summary, json.dumps(aliases)),
             )
-            for line in _section(text, MENTIONS_HEADER).splitlines():
-                mm = _MENTION.match(line.strip())
+            for line in section(text, MENTIONS_HEADER).splitlines():
+                mm = MENTION_LINE.match(line.strip())
                 if mm:
                     con.execute(
                         "INSERT INTO mentions VALUES (?,?,?)",
                         (entity_path, mm.group(1).strip(), mm.group(2) or ""),
                     )
-            for line in _section(text, RELATIONS_HEADER).splitlines():
-                rm = _RELATION.match(line.strip())
+            for line in section(text, RELATIONS_HEADER).splitlines():
+                rm = RELATION_LINE.match(line.strip())
                 if rm:
                     con.execute(
                         "INSERT INTO edges VALUES (?,?,?)",
@@ -109,6 +99,21 @@ def _path_name_map(con: sqlite3.Connection) -> dict[str, str]:
     return {r["path"]: r["name"] for r in con.execute("SELECT path, name FROM entities")}
 
 
+def _entity_dict(con: sqlite3.Connection, row, names_by_path: dict[str, str]) -> dict:
+    relations = [
+        {"rel": e["rel"], "to": names_by_path.get(e["dst_path"], Path(e["dst_path"]).stem)}
+        for e in con.execute(
+            "SELECT rel, dst_path FROM edges WHERE src_path = ?", (row["path"],)
+        )
+    ]
+    count = con.execute(
+        "SELECT COUNT(*) FROM mentions WHERE entity_path = ?", (row["path"],)
+    ).fetchone()[0]
+    return {"name": row["name"], "type": row["type"], "path": row["path"] + ".md",
+            "summary": row["summary"], "aliases": json.loads(row["aliases"]),
+            "relations": relations, "mention_count": count}
+
+
 def find_entity(db_path: Path, query: str, type: str | None = None) -> list[dict]:
     con = _connect(db_path)
     q = query.casefold()
@@ -120,20 +125,22 @@ def find_entity(db_path: Path, query: str, type: str | None = None) -> list[dict
             continue
         if type and row["type"] != type:
             continue
-        relations = [
-            {"rel": e["rel"], "to": names_by_path.get(e["dst_path"], Path(e["dst_path"]).stem)}
-            for e in con.execute(
-                "SELECT rel, dst_path FROM edges WHERE src_path = ?", (row["path"],)
-            )
-        ]
-        count = con.execute(
-            "SELECT COUNT(*) FROM mentions WHERE entity_path = ?", (row["path"],)
-        ).fetchone()[0]
-        results.append(
-            {"name": row["name"], "type": row["type"], "path": row["path"] + ".md",
-             "summary": row["summary"], "aliases": json.loads(row["aliases"]),
-             "relations": relations, "mention_count": count}
-        )
+        results.append(_entity_dict(con, row, names_by_path))
+    con.close()
+    return results
+
+
+def entities_at(db_path: Path, entity_paths: list[str]) -> list[dict]:
+    """find_entity-shaped dicts for exact entity paths (no .md), in order."""
+    con = _connect(db_path)
+    names_by_path = _path_name_map(con)
+    results = []
+    for path in entity_paths:
+        row = con.execute(
+            "SELECT * FROM entities WHERE path = ?", (path,)
+        ).fetchone()
+        if row:
+            results.append(_entity_dict(con, row, names_by_path))
     con.close()
     return results
 
