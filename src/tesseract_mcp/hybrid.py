@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import bm25 as bm25_mod
-from .embeddings import Embedder, get_note_vectors
+from .embeddings import Embedder, cosine, get_note_vectors
 from .search import Hit, body_text, iter_candidate_notes
 from .vault import Vault
 
@@ -24,20 +24,11 @@ def rrf_fuse(ranked_lists: list[list[str]], k: int = RRF_K) -> list[str]:
     return [item for item, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)]
 
 
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = sum(x * x for x in a) ** 0.5
-    norm_b = sum(y * y for y in b) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
 def _vector_rank(
     vectors: dict[str, list[float]], candidate_paths: set[str], query_vec: list[float], limit: int
 ) -> list[str]:
     scored = [
-        (path, _cosine(vec, query_vec))
+        (path, cosine(vec, query_vec))
         for path, vec in vectors.items()
         if path in candidate_paths
     ]

@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Protocol
 
 from . import sc_adapter
-from .search import SKIP_DIRS
+from .search import iter_note_files
 from .vault import Vault
 
 FALLBACK_CACHE_FILE = "fallback_embeddings.json"
@@ -34,75 +35,83 @@ class SentenceTransformerEmbedder:
         return self._model.encode(texts).tolist()
 
 
-def _scan_note_texts(vault: Vault) -> dict[str, str]:
-    texts: dict[str, str] = {}
-    for path in sorted(vault.root.rglob("*.md")):
-        rel_parts = path.relative_to(vault.root).parts
-        if SKIP_DIRS & set(rel_parts):
-            continue
-        texts["/".join(rel_parts)] = path.read_text(encoding="utf-8", errors="ignore")
-    return texts
+def cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
-def _load_fallback_cache(state_root: Path) -> dict[str, dict]:
-    p = Path(state_root) / FALLBACK_CACHE_FILE
-    if not p.exists():
+def load_vector_cache(path: Path) -> dict[str, dict]:
+    """JSON vector cache keyed by path: {key: {"hash": ..., "vec": [...]}}."""
+    path = Path(path)
+    if not path.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}  # corrupt/truncated cache self-heals: treat as empty and rewrite
 
 
-def _save_fallback_cache(state_root: Path, cache: dict[str, dict]) -> None:
-    p = Path(state_root) / FALLBACK_CACHE_FILE
-    p.write_text(json.dumps(cache), encoding="utf-8")
+def save_vector_cache(path: Path, cache: dict[str, dict]) -> None:
+    # temp file + atomic replace: an interrupted write must never leave a
+    # truncated cache that would fail every later load.
+    path = Path(path)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cache), encoding="utf-8")
+    os.replace(tmp, path)
 
 
-def get_note_vectors(vault: Vault, state_root: Path, embedder: Embedder) -> dict[str, list[float]]:
+def _content_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _fallback_path(state_root: Path) -> Path:
+    return Path(state_root) / FALLBACK_CACHE_FILE
+
+
+def _partition(
+    vault: Vault, state_root: Path
+) -> tuple[dict[str, str], dict[str, dict], dict[str, list[float]], list[str]]:
+    """(note_texts, fallback_cache, vectors, stale): a vector for every note
+    with a fresh Smart Connections entry or a matching fallback-cache entry;
+    `stale` lists the rest — the notes a search would embed inline."""
     sc_vectors = sc_adapter.load_note_vectors(vault)
-    note_texts = _scan_note_texts(vault)
-    fallback_cache = _load_fallback_cache(state_root)
-
-    result: dict[str, list[float]] = {}
-    to_embed: list[str] = []
+    note_texts = {
+        rel: path.read_text(encoding="utf-8", errors="ignore")
+        for path, rel in iter_note_files(vault)
+    }
+    fallback_cache = load_vector_cache(_fallback_path(state_root))
+    vectors: dict[str, list[float]] = {}
+    stale: list[str] = []
     for rel, text in note_texts.items():
         sc_entry = sc_vectors.get(rel)
         if sc_entry and sc_entry["fresh"]:
-            result[rel] = sc_entry["vec"]
+            vectors[rel] = sc_entry["vec"]
             continue
-        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         cached = fallback_cache.get(rel)
-        if cached and cached["hash"] == content_hash:
-            result[rel] = cached["vec"]
+        if cached and cached["hash"] == _content_hash(text):
+            vectors[rel] = cached["vec"]
             continue
-        to_embed.append(rel)
+        stale.append(rel)
+    return note_texts, fallback_cache, vectors, stale
 
-    if to_embed:
-        vecs = embedder.embed_batch([note_texts[rel] for rel in to_embed])
-        for rel, vec in zip(to_embed, vecs):
-            result[rel] = vec
-            fallback_cache[rel] = {
-                "hash": hashlib.sha256(note_texts[rel].encode("utf-8")).hexdigest(),
-                "vec": vec,
-            }
-        _save_fallback_cache(state_root, fallback_cache)
 
-    return result
+def get_note_vectors(vault: Vault, state_root: Path, embedder: Embedder) -> dict[str, list[float]]:
+    note_texts, fallback_cache, vectors, stale = _partition(vault, state_root)
+    if stale:
+        vecs = embedder.embed_batch([note_texts[rel] for rel in stale])
+        for rel, vec in zip(stale, vecs):
+            vectors[rel] = vec
+            fallback_cache[rel] = {"hash": _content_hash(note_texts[rel]), "vec": vec}
+        save_vector_cache(_fallback_path(state_root), fallback_cache)
+    return vectors
 
 
 def stale_notes(vault: Vault, state_root: Path) -> list[str]:
     """Rel paths of notes with no fresh Smart Connections vector AND no
     matching fallback-cache entry — the notes a search would embed inline.
     Read-only: never computes or caches anything."""
-    sc_vectors = sc_adapter.load_note_vectors(vault)
-    note_texts = _scan_note_texts(vault)
-    fallback_cache = _load_fallback_cache(state_root)
-    stale: list[str] = []
-    for rel, text in note_texts.items():
-        sc_entry = sc_vectors.get(rel)
-        if sc_entry and sc_entry["fresh"]:
-            continue
-        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        cached = fallback_cache.get(rel)
-        if cached and cached["hash"] == content_hash:
-            continue
-        stale.append(rel)
-    return stale
+    return _partition(vault, state_root)[3]

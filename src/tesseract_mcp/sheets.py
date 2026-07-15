@@ -537,7 +537,8 @@ def check(vault: Vault) -> int:
     for name, folder in discover_sheets(vault).items():
         schema = load_schema(vault, folder)
         invalid, seen, dupes = [], {}, []
-        for rel, meta in iter_rows(vault, schema):
+        rows = iter_rows(vault, schema)
+        for rel, meta in rows:
             try:
                 validate_fields(schema, {k: v for k, v in meta.items()
                                          if k not in STANDARD_COLUMNS},
@@ -552,8 +553,7 @@ def check(vault: Vault) -> int:
             else:
                 seen[full] = rel
         report["sheets"][name] = {
-            "rows": len(iter_rows(vault, schema)),
-            "invalid": invalid, "duplicates": dupes}
+            "rows": len(rows), "invalid": invalid, "duplicates": dupes}
         if invalid or dupes:
             report["clean"] = False
     print(json.dumps(report, indent=2, ensure_ascii=False))

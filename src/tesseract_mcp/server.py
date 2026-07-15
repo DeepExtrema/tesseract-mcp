@@ -102,19 +102,13 @@ def context_bundle(query: str, hops: int = 2, limit: int = 10) -> dict:
     related: list[dict] = []
     seen_related: set[str] = set()
     for h in hits:
-        for entity_path in cache_mod.note_entity_paths(db, h.path):
-            entity_paths.add(entity_path)
+        entity_paths.update(cache_mod.note_entity_paths(db, h.path))
         for r in cache_mod.related_notes(db, vault, h.path, hops=hops):
             if r["path"] not in seen_related:
                 seen_related.add(r["path"])
                 related.append(r)
 
-    entities = []
-    for entity_path in sorted(entity_paths):
-        name = entity_path.rsplit("/", 1)[-1]
-        found = cache_mod.find_entity(db, name)
-        entities.extend(f for f in found if f["path"][:-3] == entity_path)
-
+    entities = cache_mod.entities_at(db, sorted(entity_paths))
     return {"hits": result_hits, "entities": entities, "related_notes": related}
 
 

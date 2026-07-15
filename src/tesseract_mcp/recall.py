@@ -15,14 +15,13 @@ from datetime import datetime, timedelta
 from . import librarian as librarian_mod
 from . import tasks as tasks_mod
 from .cache import find_entity
-from .graph import _vault_files
 from .indexer import db_path
-from .search import body_text, parse_frontmatter
+from .organizer import ORGANIZER_NOTE
+from .search import body_text, iter_note_files, parse_frontmatter
 from .vault import Vault, VaultError
 
 DIGEST_DEFAULT_DAYS = 7
 TS_FMT = "%Y-%m-%d %H:%M"
-ORGANIZER_NOTE = "Claude/Organizer.md"
 DECISIONS_NOTE = "Claude/Decisions.md"
 
 
@@ -40,7 +39,7 @@ def _notes_since(
     vault: Vault, cutoff: datetime, folder: str | None = None
 ) -> list[dict]:
     out = []
-    for path, rel in _vault_files(vault, folder):
+    for path, rel in iter_note_files(vault, folder):
         mtime = datetime.fromtimestamp(path.stat().st_mtime)
         if mtime >= cutoff:
             out.append({"path": rel, "modified": mtime.strftime(TS_FMT)})
@@ -100,7 +99,7 @@ def _body_excerpt(text: str, limit: int = 400) -> str:
 def _session_notes(vault: Vault, project: str, limit: int) -> list[dict]:
     q = project.casefold()
     sessions = []
-    for path, rel in _vault_files(vault, "Claude/Sessions"):
+    for path, rel in iter_note_files(vault, "Claude/Sessions"):
         text = path.read_text(encoding="utf-8", errors="ignore")
         meta = parse_frontmatter(text)
         hay = f"{meta.get('project', '')} {path.stem}".casefold()
