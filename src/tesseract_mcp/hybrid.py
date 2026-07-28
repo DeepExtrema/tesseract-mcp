@@ -84,7 +84,12 @@ def hybrid_search(
 
     bm25_ranked = [p for p, _ in bm25_mod.rank(corpus, query, limit=50)]
 
-    all_vectors = get_note_vectors(vault, state_root, embedder)
+    # An unfiltered candidate scan IS the full-vault {rel: text} map — hand
+    # it to the vector layer so every note isn't read from disk twice.
+    all_vectors = get_note_vectors(
+        vault, state_root, embedder,
+        note_texts=corpus if not (tags or folder) else None,
+    )
     query_vec = embedder.embed_batch([query])[0]
     vector_ranked = _vector_rank(all_vectors, candidate_paths, query_vec, limit=50)
 

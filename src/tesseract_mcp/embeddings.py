@@ -44,15 +44,30 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+# In-process memo of parsed vector-cache files, keyed by (mtime_ns, size).
+# The files grow with the vault (megabytes of JSON) and are read on every
+# search in a long-running server; the stat key re-parses only after an
+# on-disk change, so out-of-process writers are still picked up.
+_parsed_caches: dict[str, tuple[tuple[int, int], dict]] = {}
+
+
 def load_vector_cache(path: Path) -> dict[str, dict]:
     """JSON vector cache keyed by path: {key: {"hash": ..., "vec": [...]}}."""
     path = Path(path)
-    if not path.exists():
-        return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        stat = path.stat()
+    except OSError:
+        return {}
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    memo = _parsed_caches.get(str(path))
+    if memo and memo[0] == stamp:
+        return memo[1]
+    try:
+        cache = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}  # corrupt/truncated cache self-heals: treat as empty and rewrite
+    _parsed_caches[str(path)] = (stamp, cache)
+    return cache
 
 
 def save_vector_cache(path: Path, cache: dict[str, dict]) -> None:
@@ -62,6 +77,8 @@ def save_vector_cache(path: Path, cache: dict[str, dict]) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cache), encoding="utf-8")
     os.replace(tmp, path)
+    stat = path.stat()
+    _parsed_caches[str(path)] = ((stat.st_mtime_ns, stat.st_size), cache)
 
 
 def _content_hash(text: str) -> str:
@@ -73,16 +90,19 @@ def _fallback_path(state_root: Path) -> Path:
 
 
 def _partition(
-    vault: Vault, state_root: Path
+    vault: Vault, state_root: Path, note_texts: dict[str, str] | None = None
 ) -> tuple[dict[str, str], dict[str, dict], dict[str, list[float]], list[str]]:
     """(note_texts, fallback_cache, vectors, stale): a vector for every note
     with a fresh Smart Connections entry or a matching fallback-cache entry;
-    `stale` lists the rest — the notes a search would embed inline."""
+    `stale` lists the rest — the notes a search would embed inline.
+    Pass note_texts (a full-vault {rel: text} scan the caller already has)
+    to skip re-reading every note."""
     sc_vectors = sc_adapter.load_note_vectors(vault)
-    note_texts = {
-        rel: path.read_text(encoding="utf-8", errors="ignore")
-        for path, rel in iter_note_files(vault)
-    }
+    if note_texts is None:
+        note_texts = {
+            rel: path.read_text(encoding="utf-8", errors="ignore")
+            for path, rel in iter_note_files(vault)
+        }
     fallback_cache = load_vector_cache(_fallback_path(state_root))
     vectors: dict[str, list[float]] = {}
     stale: list[str] = []
@@ -99,8 +119,15 @@ def _partition(
     return note_texts, fallback_cache, vectors, stale
 
 
-def get_note_vectors(vault: Vault, state_root: Path, embedder: Embedder) -> dict[str, list[float]]:
-    note_texts, fallback_cache, vectors, stale = _partition(vault, state_root)
+def get_note_vectors(
+    vault: Vault,
+    state_root: Path,
+    embedder: Embedder,
+    note_texts: dict[str, str] | None = None,
+) -> dict[str, list[float]]:
+    note_texts, fallback_cache, vectors, stale = _partition(
+        vault, state_root, note_texts
+    )
     if stale:
         vecs = embedder.embed_batch([note_texts[rel] for rel in stale])
         for rel, vec in zip(stale, vecs):

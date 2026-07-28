@@ -161,3 +161,42 @@ def test_write_gives_up_after_persistent_lock(vault, monkeypatch):
     import pytest as _pytest
     with _pytest.raises(PermissionError):
         vault.write("Claude/Inbox/lock-test2.md", "content")
+
+
+def test_append_retries_transient_windows_lock(vault, vault_dir, monkeypatch):
+    # append hits the same Windows lock window as write: the open("a")
+    # itself raises PermissionError while Obsidian/LiveSync hold the file.
+    from tesseract_mcp import vault as vault_mod
+    target = vault_dir / "Claude" / "Inbox" / "lock-append.md"
+    real_open = type(target).open
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        if self == target:
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise PermissionError(5, "Access is denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "open", flaky)
+    monkeypatch.setattr(vault_mod.time, "sleep", lambda s: None)
+    vault.append("Claude/Inbox/lock-append.md", "- captured\n")
+    assert calls["n"] == 3
+    assert vault.read("Claude/Inbox/lock-append.md") == "- captured\n"
+
+
+def test_append_gives_up_after_persistent_lock(vault, vault_dir, monkeypatch):
+    import pytest as _pytest
+    from tesseract_mcp import vault as vault_mod
+    target = vault_dir / "Claude" / "Inbox" / "lock-append2.md"
+    real_open = type(target).open
+
+    def always_locked(self, *args, **kwargs):
+        if self == target:
+            raise PermissionError(5, "Access is denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(target), "open", always_locked)
+    monkeypatch.setattr(vault_mod.time, "sleep", lambda s: None)
+    with _pytest.raises(PermissionError):
+        vault.append("Claude/Inbox/lock-append2.md", "- captured\n")
