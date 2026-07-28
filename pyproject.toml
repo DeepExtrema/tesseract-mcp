@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "MCP server for the Tesseract Obsidian mind database"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.2.0",
+    # <2: mcp 2.0 removed mcp.server.fastmcp, the API server.py is built on
+    "mcp>=1.2.0,<2",
     "pyyaml>=6.0",
     "rank-bm25>=0.2.2",
     "sentence-transformers>=3.0.0",
