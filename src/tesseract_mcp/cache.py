@@ -145,7 +145,19 @@ def entities_at(db_path: Path, entity_paths: list[str]) -> list[dict]:
     return results
 
 
-def related_notes(db_path: Path, vault: Vault, path: str, hops: int = 2) -> list[dict]:
+RELATED_LIMIT = 20
+
+
+def related_notes(
+    db_path: Path, vault: Vault, path: str, hops: int = 2,
+    limit: int = RELATED_LIMIT,
+) -> list[dict]:
+    """Notes connected through shared graph entities, ranked and capped.
+
+    A note's score sums 1/hop over every reached entity that mentions it,
+    so notes tied by direct shared entities beat distant chains, and notes
+    sharing several entities beat single-link ones. A hub entity two hops
+    out can no longer flood the result — the cap keeps the K strongest."""
     con = _connect(db_path)
     # normalize once: entity_path/mentions.note_path are stored without .md
     lookup = path[:-3] if path.endswith(".md") else path
@@ -156,11 +168,14 @@ def related_notes(db_path: Path, vault: Vault, path: str, hops: int = 2) -> list
             "SELECT entity_path FROM mentions WHERE note_path = ?", (lookup,)
         )
     ]
-    reached: dict[str, str] = {
-        e: names_by_path.get(e, Path(e).stem) for e in seed
-    }  # entity_path -> chain (rendered with names)
+    # entity_path -> (chain rendered with names, hop distance from the note)
+    reached: dict[str, tuple[str, int]] = {
+        e: (names_by_path.get(e, Path(e).stem), 1) for e in seed
+    }
     frontier = list(seed)
+    hop = 1
     for _ in range(max(0, hops - 1)):
+        hop += 1
         nxt = []
         for ent in frontier:
             for row in con.execute(
@@ -171,12 +186,13 @@ def related_notes(db_path: Path, vault: Vault, path: str, hops: int = 2) -> list
                 other = row[1]
                 if other not in reached:
                     other_name = names_by_path.get(other, Path(other).stem)
-                    reached[other] = f"{reached[ent]} ({row[0]}) {other_name}"
+                    reached[other] = (
+                        f"{reached[ent][0]} ({row[0]}) {other_name}", hop
+                    )
                     nxt.append(other)
         frontier = nxt
-    results = []
-    seen = set()
-    for ent, chain in reached.items():
+    results: dict[str, dict] = {}
+    for ent, (chain, ent_hop) in reached.items():
         for row in con.execute(
             "SELECT note_path FROM mentions WHERE entity_path = ?", (ent,)
         ):
@@ -184,12 +200,18 @@ def related_notes(db_path: Path, vault: Vault, path: str, hops: int = 2) -> list
             if note == lookup or note.startswith("Claude/Graph/"):
                 continue
             note_full = note + ".md"
-            if note_full in seen:
-                continue
-            seen.add(note_full)
-            results.append({"path": note_full, "via": chain})
+            entry = results.setdefault(
+                note_full,
+                {"path": note_full, "via": chain,
+                 "_score": 0.0, "_hop": ent_hop},
+            )
+            entry["_score"] += 1.0 / ent_hop
+            if ent_hop < entry["_hop"]:  # via = closest connecting chain
+                entry["_hop"] = ent_hop
+                entry["via"] = chain
     con.close()
-    return results
+    ranked = sorted(results.values(), key=lambda r: (-r["_score"], r["path"]))
+    return [{"path": r["path"], "via": r["via"]} for r in ranked[:limit]]
 
 
 def stats(db_path: Path) -> dict:

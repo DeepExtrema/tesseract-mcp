@@ -104,3 +104,39 @@ def test_note_entity_paths(populated, vault):
     got = cache.note_entity_paths(populated, "Claude/Inbox/interview.md")
     assert got == ["Claude/Graph/Organizations/Acme Corp"]
     assert cache.note_entity_paths(populated, "Nope.md") == []
+
+
+@pytest.fixture
+def hub(vault, tmp_path):
+    """A hub graph: `Claude/Inbox/seed.md` shares Acme directly with
+    `Projects/Direct.md`; a hop-2 hub domain is mentioned by many notes."""
+    store = GraphStore(vault)
+    hub_ent = {"name": "Everything", "type": "domain", "aliases": [], "summary": "Hub."}
+    rel = {"from": "Acme Corp", "from_type": "organization", "rel": "operates_in",
+           "to": "Everything", "to_type": "domain", "evidence": ""}
+    vault.write("Claude/Inbox/seed.md", "Seed note about [[Acme Corp]].\n")
+    store.apply("Claude/Inbox/seed.md", Extraction([ACME], [rel]))
+    vault.write("Projects/Direct.md", "Also about Acme.\n",
+                confirm_outside_claude=True)
+    store.apply("Projects/Direct.md", Extraction([ACME], []))
+    for i in range(6):
+        p = f"Projects/Hubbed {i}.md"
+        vault.write(p, "About the hub only.\n", confirm_outside_claude=True)
+        store.apply(p, Extraction([hub_ent], []))
+    db = tmp_path / "graph.db"
+    cache.rebuild(vault, db)
+    return db
+
+
+def test_related_notes_ranks_direct_share_above_hub_reach(hub, vault):
+    got = cache.related_notes(hub, vault, "Claude/Inbox/seed.md", hops=2)
+    # the note sharing Acme directly (hop 1) must outrank every note that is
+    # only reachable through the hop-2 hub domain
+    assert got[0]["path"] == "Projects/Direct.md"
+    assert "Acme Corp" in got[0]["via"]
+
+
+def test_related_notes_limit_caps_hub_flood(hub, vault):
+    got = cache.related_notes(hub, vault, "Claude/Inbox/seed.md", hops=2, limit=3)
+    assert len(got) == 3
+    assert got[0]["path"] == "Projects/Direct.md"  # strongest survives the cap
