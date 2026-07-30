@@ -2,7 +2,7 @@ import yaml
 
 from tesseract_mcp import cache, consolidate
 from tesseract_mcp.extractor import Extraction, ExtractorError
-from tesseract_mcp.graphstore import GraphStore, entity_rel_path
+from tesseract_mcp.graphstore import GraphStore, entity_rel_path, entity_summary
 from tesseract_mcp.search import parse_frontmatter
 
 ORACLE_VM = {"name": "Oracle VM", "type": "organization", "aliases": [], "summary": "Cloud VM."}
@@ -65,7 +65,7 @@ def test_gather_entities(vault):
     assert ("organization", "Oracle VM deploy") in names
 
 
-def test_propose_merges_validates(vault):
+def test_adjudicate_validates_merges(vault):
     seed(vault)
     entities = consolidate.gather_entities(vault)
     bad = {"merges": [
@@ -73,7 +73,9 @@ def test_propose_merges_validates(vault):
         {"type": "organization", "canonical": "Nonexistent", "duplicates": ["Oracle VM"]},
         {"type": "person", "canonical": "Oracle VM", "duplicates": ["Oracle VM deploy"]},
     ]}
-    got = consolidate.propose_merges(FakeBackend(bad), entities)
+    got, skipped = consolidate.adjudicate_batches(
+        FakeBackend(bad), [[entities]], entities)
+    assert skipped == 0
     assert got == [{"type": "organization", "canonical": "Oracle VM",
                     "duplicates": ["Oracle VM deploy"]}]
 
@@ -141,12 +143,12 @@ def test_entity_summary_no_frontmatter_with_horizontal_rule():
     text = "# Foo\n\nLine one.\n\n---\n\nLine two.\n\n## Mentions\n\n## Relations\n"
     # no leading frontmatter: the --- is a horizontal rule, NOT a frontmatter
     # terminator, so the whole body before Mentions is the summary
-    assert consolidate._entity_summary(text) == "Line one.\n\n---\n\nLine two."
+    assert entity_summary(text) == "Line one.\n\n---\n\nLine two."
 
 
 def test_entity_summary_empty_when_no_body():
     text = "---\nentity: topic\n---\n\n# Foo\n\n## Mentions\n\n## Relations\n"
-    assert consolidate._entity_summary(text) == ""
+    assert entity_summary(text) == ""
 
 
 def test_adjudicate_isolates_a_failing_batch():

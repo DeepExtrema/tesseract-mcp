@@ -187,7 +187,7 @@ def run_evals(
     lenient: bool = False,
 ) -> Scorecard:
     # A fresh state dir must not crash the first fallback-cache save
-    # (embeddings._save_fallback_cache writes without mkdir).
+    # (embeddings.save_vector_cache writes without mkdir).
     Path(state_root).mkdir(parents=True, exist_ok=True)
     missing = validate_paths(queries, vault.root, strict=not lenient)
     results: list[QueryResult] = []

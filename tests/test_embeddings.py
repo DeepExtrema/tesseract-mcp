@@ -83,3 +83,24 @@ def test_stale_notes_does_not_write(vault, vault_dir, tmp_path):
     state.mkdir()
     stale_notes(vault, state)
     assert not (state / "fallback_embeddings.json").exists()
+
+
+def test_load_vector_cache_memo_tracks_disk_changes(tmp_path):
+    from tesseract_mcp.embeddings import load_vector_cache, save_vector_cache
+
+    p = tmp_path / "vecs.json"
+    save_vector_cache(p, {"a": {"hash": "h1", "vec": [1.0]}})
+    assert load_vector_cache(p) == {"a": {"hash": "h1", "vec": [1.0]}}
+    # a repeat load returns the memoized parse (same content)
+    assert load_vector_cache(p)["a"]["hash"] == "h1"
+    # an out-of-process rewrite (new stamp) must be picked up
+    p.write_text('{"a": {"hash": "h2", "vec": [2.0]}}', encoding="utf-8")
+    assert load_vector_cache(p)["a"]["hash"] == "h2"
+
+
+def test_load_vector_cache_corrupt_returns_empty(tmp_path):
+    from tesseract_mcp.embeddings import load_vector_cache
+
+    p = tmp_path / "vecs.json"
+    p.write_text("{ truncated", encoding="utf-8")
+    assert load_vector_cache(p) == {}

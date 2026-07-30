@@ -13,7 +13,7 @@ import os
 import re
 
 from . import indexer
-from .search import SKIP_DIRS
+from .search import iter_note_files
 from .vault import Vault, VaultError
 
 
@@ -28,10 +28,7 @@ def _link_pattern(rel: str) -> re.Pattern:
 def duplicate_stem_exists(vault: Vault, rel: str) -> bool:
     stem = _no_md(rel).rsplit("/", 1)[-1].casefold()
     count = 0
-    for p in vault.root.rglob("*.md"):
-        parts = p.relative_to(vault.root).parts
-        if SKIP_DIRS & set(parts):
-            continue
+    for p, _rel in iter_note_files(vault):
         if p.stem.casefold() == stem:
             count += 1
             if count > 1:
@@ -43,15 +40,12 @@ def _rewrite_links(vault: Vault, src_rel: str, dst_rel: str) -> list[dict]:
     pattern = _link_pattern(src_rel)
     replacement = "[[" + _no_md(dst_rel)
     rewrites: list[dict] = []
-    for p in sorted(vault.root.rglob("*.md")):
-        parts = p.relative_to(vault.root).parts
-        if SKIP_DIRS & set(parts):
-            continue
+    for p, rel in iter_note_files(vault):
         text = p.read_text(encoding="utf-8", errors="ignore")
         new_text, count = pattern.subn(replacement, text)
         if count:
             p.write_text(new_text, encoding="utf-8")
-            rewrites.append({"path": "/".join(parts), "count": count})
+            rewrites.append({"path": rel, "count": count})
     return rewrites
 
 
@@ -65,18 +59,7 @@ def move_note(vault: Vault, old_rel: str, new_rel: str) -> dict:
     rewrites = _rewrite_links(vault, old_rel, new_rel)
     dst.parent.mkdir(parents=True, exist_ok=True)
     os.replace(src, dst)
-    manifest = indexer.load_manifest(vault.root)
-    changed = False
-    if old_rel in manifest["hashes"]:
-        manifest["hashes"][new_rel] = manifest["hashes"].pop(old_rel)
-        changed = True
-    if old_rel in manifest["failures"]:
-        # keep the retry count: a note at the attempts cap must not get
-        # fresh extraction attempts just because it moved
-        manifest["failures"][new_rel] = manifest["failures"].pop(old_rel)
-        changed = True
-    if changed:
-        indexer.save_manifest(manifest, vault.root)
+    indexer.rename_manifest_entry(vault.root, old_rel, new_rel)
     return {"from": old_rel, "to": new_rel, "rewrites": rewrites}
 
 

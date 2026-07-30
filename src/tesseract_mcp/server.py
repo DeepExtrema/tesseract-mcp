@@ -102,19 +102,16 @@ def context_bundle(query: str, hops: int = 2, limit: int = 10) -> dict:
     related: list[dict] = []
     seen_related: set[str] = set()
     for h in hits:
-        for entity_path in cache_mod.note_entity_paths(db, h.path):
-            entity_paths.add(entity_path)
+        entity_paths.update(cache_mod.note_entity_paths(db, h.path))
         for r in cache_mod.related_notes(db, vault, h.path, hops=hops):
             if r["path"] not in seen_related:
                 seen_related.add(r["path"])
                 related.append(r)
+    # per-hit lists arrive ranked; cap the merged expansion so a hub-heavy
+    # graph can't flood the bundle
+    related = related[:cache_mod.RELATED_LIMIT]
 
-    entities = []
-    for entity_path in sorted(entity_paths):
-        name = entity_path.rsplit("/", 1)[-1]
-        found = cache_mod.find_entity(db, name)
-        entities.extend(f for f in found if f["path"][:-3] == entity_path)
-
+    entities = cache_mod.entities_at(db, sorted(entity_paths))
     return {"hits": result_hits, "entities": entities, "related_notes": related}
 
 
@@ -362,11 +359,15 @@ def find_entity(query: str, type: str | None = None) -> list[dict]:
 
 
 @mcp.tool()
-def related_notes(path: str, hops: int = 2) -> list[dict]:
+def related_notes(path: str, hops: int = 2, limit: int = 20) -> list[dict]:
     """Notes connected to the given note through shared graph entities within
-    N hops. Each result includes the entity chain explaining the connection —
-    the GraphRAG way to gather context beyond text search."""
-    return cache_mod.related_notes(_graph_db(), get_vault(), path, hops=hops)
+    N hops, ranked by connection strength (closer + more shared entities
+    first) and capped at `limit`. Each result includes the entity chain
+    explaining the connection — the GraphRAG way to gather context beyond
+    text search."""
+    return cache_mod.related_notes(
+        _graph_db(), get_vault(), path, hops=hops, limit=limit
+    )
 
 
 @mcp.tool()

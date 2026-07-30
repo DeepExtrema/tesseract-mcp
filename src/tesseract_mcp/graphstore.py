@@ -1,7 +1,14 @@
-"""Markdown-native graph store: entity notes under Claude/Graph/."""
+"""Markdown-native graph store: entity notes under Claude/Graph/.
+
+This module owns the entity-note format — the section headers, the
+mention/relation line shapes, and the frontmatter conventions. The parse
+helpers (section, section_lines, entity_summary, MENTION_LINE,
+RELATION_LINE) live here beside the code that writes those shapes.
+"""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -9,7 +16,7 @@ import yaml
 
 from .extractor import Extraction
 from .notes import AGENT_NAME, safe_filename
-from .search import parse_frontmatter
+from .search import as_str_list, body_text, parse_frontmatter
 from .vault import Vault, VaultError
 
 GRAPH_ROOT = "Claude/Graph"
@@ -24,6 +31,38 @@ TYPE_FOLDERS = {
 MENTIONS_HEADER = "## Mentions"
 RELATIONS_HEADER = "## Relations"
 REDIRECT_MAX_DEPTH = 5
+
+# Mentions are path-qualified: - [[Projects/Sentinel ESG|Sentinel ESG]] — evidence
+# group 1 = full vault-relative path (no .md); group 2 = evidence (optional)
+MENTION_LINE = re.compile(r"^- \[\[([^\]|]+)\|[^\]]+\]\](?:\s+[—-]\s+(.*))?$")
+# Relations are path-qualified the same way: - operates_in [[Claude/Graph/.../X|X]]
+# group 1 = relation name; group 2 = full vault-relative path of target (no .md)
+RELATION_LINE = re.compile(r"^- (\w+) \[\[([^\]|]+)\|[^\]]+\]\]$")
+
+
+def section(text: str, header: str) -> str:
+    """The slice of `text` from `header` up to the next `## ` heading."""
+    start = text.find(header)
+    if start == -1:
+        return ""
+    nxt = text.find("\n## ", start + len(header))
+    return text[start : nxt if nxt != -1 else len(text)]
+
+
+def section_lines(text: str, header: str) -> list[str]:
+    """The `- ` bullet lines of one section."""
+    return [l for l in section(text, header).splitlines() if l.startswith("- ")]
+
+
+def entity_summary(text: str) -> str:
+    """Body text between the `# name` H1 and `## Mentions` — the note
+    template writes the entity summary there (not frontmatter)."""
+    body = body_text(text)
+    cut = body.find(MENTIONS_HEADER)
+    if cut != -1:
+        body = body[:cut]
+    lines = [l for l in body.splitlines() if not l.startswith("# ")]
+    return "\n".join(lines).strip()
 
 
 def resolve_redirect(
@@ -58,6 +97,27 @@ def entity_rel_path(etype: str, name: str) -> str:
     return f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{safe_filename(name)}.md"
 
 
+def merge_aliases(vault: Vault, rel: str, candidates: list[str]) -> bool:
+    """Fold new alias candidates into an entity note's frontmatter, skipping
+    names already known (existing aliases or the note's own stem). False when
+    nothing is new or the frontmatter is malformed (never corrupt the note)."""
+    text = vault.read(rel)
+    meta = parse_frontmatter(text)
+    current = as_str_list(meta.get("aliases"))
+    note_name = rel.rsplit("/", 1)[-1][:-3]
+    known = {a.casefold() for a in current} | {note_name.casefold()}
+    added = [a for a in candidates if a and a.casefold() not in known]
+    if not added:
+        return False
+    end = text.find("\n---", 3)
+    if end == -1:
+        return False
+    meta["aliases"] = current + added
+    fm = "---\n" + yaml.safe_dump(meta, sort_keys=False, default_flow_style=None) + "---"
+    vault.write(rel, fm + text[end + 4:], overwrite=True)
+    return True
+
+
 def _note_template(ent: dict, now: datetime) -> str:
     meta = {
         "created": now.strftime("%Y-%m-%d %H:%M"),
@@ -87,12 +147,10 @@ class GraphStore:
         needle = name.casefold()
         for p in sorted(folder.glob("*.md")):
             meta = parse_frontmatter(p.read_text(encoding="utf-8", errors="ignore"))
-            aliases = meta.get("aliases") or []
-            if not isinstance(aliases, list):
-                aliases = [aliases]
+            aliases = as_str_list(meta.get("aliases"))
             if (p.stem.casefold() != needle
                     and safe_filename(name).casefold() != p.stem.casefold()
-                    and needle not in {str(a).casefold() for a in aliases}):
+                    and needle not in {a.casefold() for a in aliases}):
                 continue
             rel = f"{GRAPH_ROOT}/{TYPE_FOLDERS[etype]}/{p.name}"
             if meta.get("merged_into"):
@@ -115,42 +173,26 @@ class GraphStore:
             self.vault.write(rel, _note_template(ent, now))
             return rel, True
         # merge new aliases (and a colliding display name) into frontmatter
-        text = self.vault.read(existing)
-        meta = parse_frontmatter(text)
+        meta = parse_frontmatter(self.vault.read(existing))
         if meta.get("retired"):
             # revive: a retired entity that reappears in extraction comes
             # back as a fresh note, keeping the tombstone's recorded aliases
             revived = dict(ent)
-            old = meta.get("aliases") or []
-            if not isinstance(old, list):
-                old = [old]
             known = {str(a).casefold() for a in (ent.get("aliases") or [])}
             known.add(ent["name"].casefold())
             revived["aliases"] = list(ent.get("aliases") or []) + [
-                str(a) for a in old if str(a).casefold() not in known]
+                a for a in as_str_list(meta.get("aliases"))
+                if a.casefold() not in known]
             self.vault.write(existing, _note_template(revived, now),
                              overwrite=True)
             return existing, True
         # the note's canonical name is its H1; a differing incoming name is a
         # safe_filename collision we must not silently drop — record it as alias
         note_name = existing.rsplit("/", 1)[-1][:-3]
-        candidates = [a for a in (ent.get("aliases") or []) if a]
+        candidates = list(ent.get("aliases") or [])
         if ent["name"].casefold() != note_name.casefold():
             candidates.append(ent["name"])
-        if candidates:
-            current = meta.get("aliases") or []
-            if not isinstance(current, list):
-                current = [current]
-            known = {str(a).casefold() for a in current} | {note_name.casefold()}
-            added = [a for a in candidates if a.casefold() not in known]
-            if added:
-                end = text.find("\n---", 3)
-                if end == -1:
-                    return existing, False  # malformed frontmatter; do not corrupt
-                meta["aliases"] = [str(a) for a in current] + added
-                body = text[end + 4 :]
-                fm = "---\n" + yaml.safe_dump(meta, sort_keys=False, default_flow_style=None) + "---"
-                self.vault.write(existing, fm + body, overwrite=True)
+        merge_aliases(self.vault, existing, candidates)
         return existing, False
 
     def _insert_line(self, rel: str, header: str, line: str, already: str) -> bool:
@@ -160,8 +202,8 @@ class GraphStore:
             text = text.rstrip() + f"\n\n{header}\n"
             start = text.find(header)
         next_header = text.find("\n## ", start + len(header))
-        section = text[start : next_header if next_header != -1 else len(text)]
-        if already in section:
+        current = text[start : next_header if next_header != -1 else len(text)]
+        if already in current:
             return False
         insert_at = next_header if next_header != -1 else len(text)
         updated = text[:insert_at].rstrip() + "\n" + line + "\n" + (

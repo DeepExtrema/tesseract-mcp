@@ -12,7 +12,7 @@ from . import cache
 from . import embeddings as embeddings_mod
 from .extractor import ExtractorError, extraction_extractor
 from .graphstore import GRAPH_ROOT, GraphStore
-from .search import SKIP_DIRS
+from .search import iter_note_files
 from .vault import Vault, VaultError
 
 DEFAULT_IGNORE = ("copilot",)
@@ -78,17 +78,44 @@ def save_manifest(manifest: dict, vault_root: str | Path | None = None) -> None:
 def scan_notes(vault: Vault, ignore: tuple[str, ...] = DEFAULT_IGNORE) -> dict[str, str]:
     """vault-relative path -> sha256 of content, for every indexable note."""
     hashes: dict[str, str] = {}
-    for path in sorted(vault.root.rglob("*.md")):
-        rel_parts = path.relative_to(vault.root).parts
-        if SKIP_DIRS & set(rel_parts):
-            continue
-        rel = "/".join(rel_parts)
+    for path, rel in iter_note_files(vault):
         if (rel.startswith(GRAPH_ROOT + "/") or rel in CARETAKER_NOTES
-                or rel_parts[0] in ignore):
+                or rel.split("/", 1)[0] in ignore):
             continue
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        hashes[rel] = digest
+        hashes[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
     return hashes
+
+
+def pending_notes(manifest: dict, current: dict[str, str]) -> tuple[list[str], int]:
+    """Notes needing (re-)extraction given the manifest and a scan_notes()
+    result: (new/changed/previously-failed notes, count benched at
+    MAX_ATTEMPTS)."""
+    pending: list[str] = []
+    benched = 0
+    for rel, digest in current.items():
+        failure = manifest["failures"].get(rel)
+        if failure and failure["attempts"] >= MAX_ATTEMPTS:
+            benched += 1
+            continue
+        if manifest["hashes"].get(rel) != digest or failure:
+            pending.append(rel)
+    return pending, benched
+
+
+def rename_manifest_entry(
+    vault_root: str | Path, old_rel: str, new_rel: str
+) -> None:
+    """Transfer a note's manifest entries to a new path. The failure ledger
+    moves too, keeping the retry count: a note at the attempts cap must not
+    get fresh extraction attempts just because it moved."""
+    manifest = load_manifest(vault_root)
+    changed = False
+    for ledger in ("hashes", "failures"):
+        if old_rel in manifest[ledger]:
+            manifest[ledger][new_rel] = manifest[ledger].pop(old_rel)
+            changed = True
+    if changed:
+        save_manifest(manifest, vault_root)
 
 
 def run(
@@ -106,18 +133,10 @@ def run(
         # cleared entries fall through the normal hash-diff pending logic.
         manifest["failures"].clear()
     current = scan_notes(vault, ignore)
-    skipped = 0
     if force:
-        pending = list(current)
+        pending, skipped = list(current), 0
     else:
-        pending = []
-        for rel, digest in current.items():
-            failure = manifest["failures"].get(rel)
-            if failure and failure["attempts"] >= MAX_ATTEMPTS:
-                skipped += 1
-                continue
-            if manifest["hashes"].get(rel) != digest or failure:
-                pending.append(rel)
+        pending, skipped = pending_notes(manifest, current)
     todo, remaining = pending[:batch], max(0, len(pending) - batch)
 
     store = GraphStore(vault)

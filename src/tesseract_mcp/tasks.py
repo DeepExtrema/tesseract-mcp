@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .search import SKIP_DIRS
+from .search import iter_note_files
 from .vault import Vault
 
 TASKS_FILE = "Claude/Tasks.md"
@@ -34,12 +34,8 @@ def list_tasks(
     vault: Vault, include_done: bool = False, folder: str | None = None
 ) -> list[dict]:
     """Scan the vault for checkbox tasks. Returns path, text, done per task."""
-    base = vault.resolve(folder) if folder else vault.root
     found: list[dict] = []
-    for path in sorted(base.rglob("*.md")):
-        rel_parts = path.relative_to(vault.root).parts
-        if SKIP_DIRS & set(rel_parts):
-            continue
+    for path, rel in iter_note_files(vault, folder):
         text = path.read_text(encoding="utf-8", errors="ignore")
         for line in text.splitlines():
             m = _TASK_LINE.match(line)
@@ -49,10 +45,6 @@ def list_tasks(
             if done and not include_done:
                 continue
             found.append(
-                {
-                    "path": "/".join(rel_parts),
-                    "text": m.group("text").strip(),
-                    "done": done,
-                }
+                {"path": rel, "text": m.group("text").strip(), "done": done}
             )
     return found

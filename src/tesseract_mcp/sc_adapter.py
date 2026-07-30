@@ -22,20 +22,33 @@ SMART_ENV_DIR = ".smart-env"
 MODEL_KEY = "TaylorAI/bge-micro-v2"
 _SOURCE_PREFIX = "smart_sources:"
 
+# In-process memo of parsed .ajson files keyed by (mtime_ns, size): Smart
+# Connections' files are re-read on every search in a long-running server
+# but only change when Obsidian re-embeds something.
+_parsed_ajson: dict[str, tuple[tuple[int, int], dict]] = {}
+
 
 def _parse_ajson_file(path: Path) -> dict[str, dict]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    memo = _parsed_ajson.get(str(path))
+    if memo and memo[0] == stamp:
+        return memo[1]
     lines = [
         line.strip().rstrip(",")
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()
         if line.strip()
     ]
-    if not lines:
-        return {}
-    blob = "{" + ",".join(lines) + "}"
+    blob = "{" + ",".join(lines) + "}" if lines else "{}"
     try:
-        return json.loads(blob)
+        entries = json.loads(blob)
     except json.JSONDecodeError:
-        return {}
+        entries = {}
+    _parsed_ajson[str(path)] = (stamp, entries)
+    return entries
 
 
 def load_note_vectors(vault: Vault, model_key: str = MODEL_KEY) -> dict[str, dict]:

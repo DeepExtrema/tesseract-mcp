@@ -10,13 +10,10 @@ from __future__ import annotations
 
 import bisect
 import hashlib
-import json
-import os
 from collections import defaultdict
 from pathlib import Path
 
-from .embeddings import Embedder
-from .hybrid import _cosine
+from .embeddings import Embedder, cosine, load_vector_cache, save_vector_cache
 
 SIM_THRESHOLD = 0.85
 K_NEIGHBORS = 5
@@ -36,29 +33,14 @@ def identity_hash(entity: dict) -> str:
     return hashlib.sha256(identity_text(entity).encode("utf-8")).hexdigest()
 
 
-def _load_entity_vectors(state_root: Path) -> dict[str, dict]:
-    p = Path(state_root) / ENTITY_VECTOR_FILE
-    if not p.exists():
-        return {}
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}  # corrupt/truncated cache self-heals: treat as empty and rewrite
-
-
-def _save_entity_vectors(state_root: Path, cache: dict[str, dict]) -> None:
-    # temp file + atomic replace: an interrupted write must never leave a
-    # truncated cache that would fail every later consolidate sweep.
-    p = Path(state_root) / ENTITY_VECTOR_FILE
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cache), encoding="utf-8")
-    os.replace(tmp, p)
+def _vector_path(state_root: Path) -> Path:
+    return Path(state_root) / ENTITY_VECTOR_FILE
 
 
 def compute_entity_vectors(
     entities: list[dict], state_root: Path, embedder: Embedder
 ) -> dict[str, list[float]]:
-    cache = _load_entity_vectors(state_root)
+    cache = load_vector_cache(_vector_path(state_root))
     result: dict[str, list[float]] = {}
     to_embed: list[dict] = []
     hashes: dict[str, str] = {}
@@ -75,19 +57,19 @@ def compute_entity_vectors(
         for e, vec in zip(to_embed, vecs):
             result[e["path"]] = vec
             cache[e["path"]] = {"hash": hashes[e["path"]], "vec": vec}
-        _save_entity_vectors(state_root, cache)
+        save_vector_cache(_vector_path(state_root), cache)
     return result
 
 
 def prune_entity_vectors(state_root: Path, live_paths: set[str]) -> int:
     """Drop cached identity vectors for entities that no longer exist
     (deleted, merged, or retired). Returns the number of keys dropped."""
-    cache = _load_entity_vectors(state_root)
+    cache = load_vector_cache(_vector_path(state_root))
     stale = [k for k in cache if k not in live_paths]
     for k in stale:
         del cache[k]
     if stale:
-        _save_entity_vectors(state_root, cache)
+        save_vector_cache(_vector_path(state_root), cache)
     return len(stale)
 
 
@@ -114,7 +96,7 @@ def _candidate_pairs(
             ov = vectors.get(other["path"])
             if ov is None:
                 continue
-            c = _cosine(sv, ov)
+            c = cosine(sv, ov)
             if c >= threshold:
                 sims.append((c, other["path"]))
         sims.sort(reverse=True)

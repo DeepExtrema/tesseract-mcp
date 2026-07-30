@@ -18,6 +18,7 @@ from pathlib import Path
 from . import cache, indexer
 from . import embeddings as embeddings_mod
 from . import sheets
+from .embeddings import cosine
 from .mover import duplicate_stem_exists, move_note, reverse_rewrites
 from .search import parse_frontmatter
 from .vault import Vault, VaultError
@@ -69,15 +70,18 @@ def iter_organized(vault: Vault) -> list[str]:
     return out
 
 
-def iter_candidates(vault: Vault) -> list[str]:
+def iter_candidates(vault: Vault, organized: list[str] | None = None) -> list[str]:
     """Notes the organizer may classify: vault-root .md files plus
-    already-organized notes (re-checkable), minus organize: false."""
+    already-organized notes (re-checkable), minus organize: false.
+    Pass a precomputed iter_organized() result to skip the second walk."""
+    if organized is None:
+        organized = iter_organized(vault)
     root_notes = sorted(
         p.name for p in vault.root.iterdir()
         if p.is_file() and p.suffix == ".md" and p.name not in EXCLUDED_ROOT_FILES
     )
     return [
-        rel for rel in root_notes + iter_organized(vault)
+        rel for rel in root_notes + organized
         if _wants_organizing(vault, rel) and not _in_sheet_folder(vault, rel)
     ]
 
@@ -87,13 +91,6 @@ class Classification:
     folder: str | None
     share: float
     neighbors: list[str]
-
-
-def _cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    return dot / (na * nb) if na and nb else 0.0
 
 
 def classify(
@@ -108,7 +105,7 @@ def classify(
     if vec is None:
         return Classification(None, 0.0, [])
     scored = [
-        (other, _cosine(vec, vectors[other]))
+        (other, cosine(vec, vectors[other]))
         for other in labeled
         if other != rel and other in vectors
     ]
@@ -190,16 +187,7 @@ def undo_move(vault: Vault, note_rel: str) -> dict:
         entry["to"],
         [r["path"] for r in entry["rewrites"]],
     )
-    manifest = indexer.load_manifest(vault.root)
-    changed = False
-    if entry["to"] in manifest["hashes"]:
-        manifest["hashes"][entry["from"]] = manifest["hashes"].pop(entry["to"])
-        changed = True
-    if entry["to"] in manifest["failures"]:
-        manifest["failures"][entry["from"]] = manifest["failures"].pop(entry["to"])
-        changed = True
-    if changed:
-        indexer.save_manifest(manifest, vault.root)
+    indexer.rename_manifest_entry(vault.root, entry["to"], entry["from"])
     entries[target_idx]["undone"] = True
     jp.write_text(
         "".join(json.dumps(e) + "\n" for e in entries), encoding="utf-8"
@@ -225,7 +213,7 @@ def run_sweep(vault: Vault, embedder=None, apply: bool = False) -> dict:
     proposals: list[dict] = []
     skipped: list[dict] = []
 
-    for rel in iter_candidates(vault):
+    for rel in iter_candidates(vault, organized=labeled):
         current = rel.split("/")[0] if "/" in rel and rel.split("/")[0] in taxonomy else None
         cls = classify(rel, vectors, labeled)
         if cls.folder is None:

@@ -17,6 +17,22 @@ class VaultError(Exception):
     """Raised when a vault operation is invalid."""
 
 
+def _retry_locked(fn):
+    """Run fn, retrying transient PermissionError with backoff.
+
+    Obsidian/LiveSync/antivirus briefly lock notes on Windows, making file
+    operations raise PermissionError (WinError 5). Caretaker sweeps run
+    while Obsidian is open, so both write and append must ride out short
+    locks before giving up."""
+    for attempt in range(5):
+        try:
+            return fn()
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+
 class Vault:
     CLAUDE_DIR = "Claude"
 
@@ -76,17 +92,7 @@ class Vault:
         # Windows the first patch of a pre-existing LF file silently
         # rewrites every line as CRLF. Force LF regardless of platform.
         tmp.write_text(content, encoding="utf-8", newline="\n")
-        # Obsidian/LiveSync/antivirus briefly lock notes on Windows, making
-        # os.replace raise PermissionError (WinError 5). Retry with backoff
-        # before giving up — caretaker sweeps run while Obsidian is open.
-        for attempt in range(5):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 4:
-                    raise
-                time.sleep(0.2 * (attempt + 1))
+        _retry_locked(lambda: os.replace(tmp, path))
         return path
 
     def append(
@@ -101,6 +107,10 @@ class Vault:
         if path.is_dir():
             raise VaultError(f"'{relative}' is a directory, not a note.")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(content)
+
+        def _do_append():
+            with path.open("a", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+
+        _retry_locked(_do_append)
         return path

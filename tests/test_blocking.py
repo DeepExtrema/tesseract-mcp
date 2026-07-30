@@ -1,4 +1,4 @@
-from tesseract_mcp import blocking
+from tesseract_mcp import blocking, embeddings
 
 
 def test_identity_text_combines_name_aliases_summary():
@@ -203,7 +203,7 @@ def test_prune_entity_vectors_drops_vanished_paths(tmp_path):
     blocking.compute_entity_vectors(_ents(), tmp_path, FakeEmbedder())
     live = {"Claude/Graph/Organizations/Acme"}  # Acme Corp vanished
     assert blocking.prune_entity_vectors(tmp_path, live) == 1
-    cache = blocking._load_entity_vectors(tmp_path)
+    cache = embeddings.load_vector_cache(tmp_path / blocking.ENTITY_VECTOR_FILE)
     assert set(cache) == live
 
 

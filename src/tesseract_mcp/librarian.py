@@ -192,13 +192,11 @@ def _drain_index(vault: Vault, extractor) -> dict:
 
 
 def _index_preview(vault: Vault) -> dict:
-    """Dry-run index: count pending notes without extracting or writing."""
+    """Dry-run index: count pending notes without extracting or writing.
+    Same pending logic the real run uses, so notes benched at the retry
+    cap are not reported as pending work."""
     manifest = indexer.load_manifest(vault.root)
-    current = indexer.scan_notes(vault)
-    pending = [
-        rel for rel, digest in current.items()
-        if manifest["hashes"].get(rel) != digest or manifest["failures"].get(rel)
-    ]
+    pending, _benched = indexer.pending_notes(manifest, indexer.scan_notes(vault))
     return {"pending": len(pending)}
 
 
